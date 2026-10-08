@@ -2,7 +2,7 @@
 
 ## Session roadmap
 
-Latest recorded turn: T002. Selected manual-save implementation complete.
+Latest recorded turn: T003. Manual-save implementation and resize compatibility repair complete.
 
 | State | Step | Outcome |
 | --- | --- | --- |
@@ -10,6 +10,7 @@ Latest recorded turn: T002. Selected manual-save implementation complete.
 | completed | S2 Baseline and initial draft | T001 exploration retained in journal. |
 | canceled | S3 Automatic tracking design | Owner replaced scope in T002. |
 | completed | S4 Manual save and resume | PLAN-KITTY-0002 M1 delivered and verified. |
+| completed | S5 Resize compatibility | MAINT-KITTY-0001 repairs Python 3.14 TUI startup. |
 
 Manual Session format 1; roadmap is a projection, not lifecycle authority.
 
@@ -19,8 +20,8 @@ Manual Session format 1; roadmap is a projection, not lifecycle authority.
 | Status | completed |
 | Primary card | [KB-KITTY-001](../KanBan/completed/%23001--Proposal--Kitty-resume.md) |
 | Snapshot date | 2026-10-08 |
-| Current step | S4 completed |
-| Proposed next step | Owner uses F1 and kitty resume in a newly started patched Kitty |
+| Current step | S5 completed |
+| Proposed next step | Owner can retry Ctrl+Shift+R immediately |
 | Execution authority | T002 owner request selects native manual save and a resume TUI |
 
 ## Goal
@@ -105,9 +106,26 @@ Codex conversation tracking is requested in the selected scope.
 - Git: scoped local milestone commit prepared for delivery; prior link patch and
   separate Linux repository changes remain uncommitted. No push/publication.
 
+### T003 — 2026-10-08, repair Ctrl+Shift+R startup
+
+- Owner reported the resize kitten raising RuntimeError in asyncio.get_event_loop.
+  This entry is a manual summary of the visible report, not an automatic transcript.
+- Reproduced under the bundled Python 3.14. Confirmed the changed standard-library
+  behavior in Python documentation and inspected the shared TUI loop lifecycle.
+- Applied SDP Change Analysis, Planning and Worker for bounded
+  [MAINT-KITTY-0001](../Maintenance/MAINT-KITTY-0001.md), with current branch and a
+  scoped milestone commit. Original resume scope and closed records stay complete.
+- Fixed missing-loop initialization while retaining current-loop reuse and the
+  macOS selector. Three TUI tests passed, including the new regression.
+- Isolated GUI test: actual Ctrl+Shift+R opened resize; W changed width from 40 to
+  42 columns; Escape closed the overlay. The kitten loads the fix on next invocation.
+- No restart, shortcut remapping or changes to prior wrapped-link work required.
+  Evidence is linked from the Maintenance record. No independent review claimed.
+
 ## Closeout
 
 Selected scope complete: KB-KITTY-001 and PLAN-KITTY-0002 completed;
-PLAN-KITTY-0001 canceled. This is agent self-verification, not independent review.
+PLAN-KITTY-0001 canceled. Follow-up MAINT-KITTY-0001 is completed.
+This is agent self-verification, not independent review.
 Native save/load boundaries remain; no custom geometry or application memory
 restoration is claimed. Blueprints remain future SDP infrastructure.

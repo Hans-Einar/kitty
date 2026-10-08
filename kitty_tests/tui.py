@@ -7,6 +7,36 @@ from . import BaseTest
 
 class TestTUI(BaseTest):
 
+    def test_event_loop_initialization(self):
+        import asyncio
+        from unittest.mock import patch
+
+        from kittens.tui.loop import Loop
+
+        try:
+            previous = asyncio.get_event_loop()
+        except RuntimeError:
+            previous = None
+        created = None
+        try:
+            asyncio.set_event_loop(None)
+            # Exercise the non-macOS path even when running this regression on macOS.
+            with patch('kittens.tui.loop.is_macos', False):
+                first = Loop()
+                created = first.asyncio_loop
+                self.assertIs(asyncio.get_event_loop(), created)
+                self.assertFalse(created.is_closed())
+                seen = []
+                created.call_soon(seen.append, 'callback ran')
+                created.call_soon(created.stop)
+                created.run_forever()
+                self.assertEqual(seen, ['callback ran'])
+                self.assertIs(Loop().asyncio_loop, created)
+        finally:
+            if created is not None:
+                created.close()
+            asyncio.set_event_loop(previous)
+
     def test_line_edit(self):
         from kittens.tui.line_edit import LineEdit
         le = LineEdit()

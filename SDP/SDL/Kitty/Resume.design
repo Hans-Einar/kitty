@@ -1,0 +1,34 @@
+language design-core version 0.5.
+container KittyHost.
+feature ManualWorkspaceResume.
+unit NativeSessionCodec.
+functionality RememberSavedPath.
+usecase RestoreWorkspace.
+functionality RestoreWorkspaceState.
+mode Restoring.
+unit ResumePicker.
+functionality SaveWorkspace.
+unit SavedSessionCatalog.
+mode Saving.
+functionality SelectWorkspace.
+interface SessionFilePort.
+actor TerminalUser.
+KittyHost contains NativeSessionCodec.
+KittyHost contains ResumePicker.
+KittyHost contains SavedSessionCatalog.
+ManualWorkspaceResume supports RestoreWorkspace.
+NativeSessionCodec consumes SessionFilePort.
+NativeSessionCodec owns RestoreWorkspaceState.
+NativeSessionCodec owns SaveWorkspace.
+RememberSavedPath allocated-to KittyHost in mode Saving.
+RememberSavedPath contributes-to ManualWorkspaceResume.
+RestoreWorkspaceState allocated-to KittyHost in mode Restoring.
+RestoreWorkspaceState contributes-to ManualWorkspaceResume.
+ResumePicker owns SelectWorkspace.
+SaveWorkspace allocated-to KittyHost in mode Saving.
+SaveWorkspace contributes-to ManualWorkspaceResume.
+SavedSessionCatalog consumes SessionFilePort.
+SavedSessionCatalog owns RememberSavedPath.
+SelectWorkspace allocated-to KittyHost in mode Restoring.
+SelectWorkspace contributes-to ManualWorkspaceResume.
+TerminalUser pursues RestoreWorkspace.

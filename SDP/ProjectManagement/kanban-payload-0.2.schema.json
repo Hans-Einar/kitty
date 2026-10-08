@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KanBan event payload 0.2 (validate envelope and lineage semantics separately)",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "previousEventId",
+    "from",
+    "to",
+    "fromPath",
+    "toPath",
+    "reason",
+    "links"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.2"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*$"
+    },
+    "previousEventId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^EVT-KB-[A-Z][A-Z0-9]*-[0-9]{6,}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "from": {
+      "anyOf": [
+        {
+          "enum": [
+            "backlog",
+            "onHold",
+            "active",
+            "completed",
+            "canceled",
+            "superseded",
+            "irrelevant"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "to": {
+      "enum": [
+        "backlog",
+        "onHold",
+        "active",
+        "completed",
+        "canceled",
+        "superseded",
+        "irrelevant"
+      ]
+    },
+    "fromPath": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(backlog|onHold|active|completed|canceled|superseded|irrelevant)/#[0-9]{3,}--[^/\\\\]+\\.md$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "toPath": {
+      "type": "string",
+      "pattern": "^(backlog|onHold|active|completed|canceled|superseded|irrelevant)/#[0-9]{3,}--[^/\\\\]+\\.md$"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "lineage": {
+      "$ref": "#/$defs/lineage"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "required": [
+        "operationId",
+        "kind",
+        "sources",
+        "targets"
+      ],
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "pattern": "^KBO-[A-Z][A-Z0-9]*-[0-9]{6,}$"
+        },
+        "kind": {
+          "enum": [
+            "merge",
+            "split"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "scope",
+              "remaining"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^KB-[A-Z][A-Z0-9]*-[0-9]{3,}$"
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "remaining": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "scope"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^KB-[A-Z][A-Z0-9]*-[0-9]{3,}$"
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "merge"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sources": {
+                "minItems": 2
+              },
+              "targets": {
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "split"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sources": {
+                "maxItems": 1
+              },
+              "targets": {
+                "minItems": 2
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+project:
+  name: Kitty
+  status: active-development
+
+release:
+  previousVersion: null
+  activeReleaseId: null
+  targetVersion: null
+  state: unreleased
+
+active:
+  sprint: null
+  refactor: null
+  iteration: null
+  slice: null
+  fix: null
+  revision: null

@@ -1,0 +1,12 @@
+schemaVersion: "1.0"
+releaseId: REL-0.0.0
+version: "0.0.0"
+state: unreleased
+releaseNotesPath: SDP/RELEASE-NOTES.md
+includedCapabilities: []
+verificationRecords: []
+reviewRecords: []
+migrationRecord: null
+releasePreparationCommit: null
+gitTag: null
+githubReleaseUrl: null

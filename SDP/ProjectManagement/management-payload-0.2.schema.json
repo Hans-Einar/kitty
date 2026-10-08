@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project-management payload 0.2",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "previousEventId",
+    "from",
+    "to",
+    "fromPath",
+    "toPath",
+    "reason",
+    "links"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.2"
+    },
+    "kind": {
+      "enum": [
+        "Scrum",
+        "Sprint",
+        "Maintenance",
+        "CodeReview",
+        "Refactor",
+        "Plan"
+      ]
+    },
+    "previousEventId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^EVT-PM-[A-Z][A-Z0-9]*-[0-9]{6,}$"
+    },
+    "from": {
+      "enum": [
+        null,
+        "planned",
+        "active",
+        "completed",
+        "canceled"
+      ]
+    },
+    "to": {
+      "enum": [
+        "planned",
+        "active",
+        "completed",
+        "canceled"
+      ]
+    },
+    "fromPath": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "toPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "links": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "members": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^KB-[A-Z][A-Z0-9]*-[0-9]{3,}$"
+      }
+    },
+    "planType": {
+      "enum": [
+        "MaintenancePlan",
+        "RequirementPlan",
+        "ArchitecturePlan",
+        "DesignPlan",
+        "ImplementationPlan",
+        "VerificationPlan"
+      ]
+    },
+    "plans": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(PLAN|MAINT)-[A-Z][A-Z0-9]*-[0-9]{4,}$"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "Plan",
+              "Maintenance"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "planType"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "planType"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Maintenance"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "planType": {
+            "const": "MaintenancePlan"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Sprint"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "members",
+          "plans"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "members"
+              ]
+            },
+            {
+              "required": [
+                "plans"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

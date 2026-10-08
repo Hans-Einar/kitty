@@ -118,7 +118,9 @@ class Session:
     def set_layout_state(self, val: str) -> None:
         self.tabs[-1].layout_state = json.loads(val)
 
-    def add_window(self, cmd: None | str | list[str], expand: Callable[[str], str] = lambda x: x) -> None:
+    def add_window(
+        self, cmd: None | str | list[str], expand: Callable[[str], str] = lambda x: x, session_base_dir: str = ''
+    ) -> None:
         from .launch import parse_launch_args
         needs_expandvars = False
         if isinstance(cmd, str) and cmd:
@@ -141,6 +143,10 @@ class Session:
         t = self.tabs[-1]
         if t.next_title and not spec.opts.window_title:
             spec.opts.window_title = t.next_title
+        # Serialized per-window paths are relative to the saved session file,
+        # just like the tab's cd command, not the process launching Kitty.
+        if serialize_data['id'] and session_base_dir and spec.opts.cwd and not os.path.isabs(spec.opts.cwd):
+            spec.opts.cwd = os.path.abspath(os.path.join(session_base_dir, spec.opts.cwd))
         spec.opts.cwd = spec.opts.cwd or t.cwd
         t.windows.append(WindowSpec(
             spec, serialized_id=serialize_data['id'],
@@ -246,7 +252,7 @@ def parse_session(
             elif cmd == 'layout':
                 ans.set_layout(rest)
             elif cmd == 'launch':
-                ans.add_window(rest, expand)
+                ans.add_window(rest, expand, session_base_dir)
             elif cmd == 'focus':
                 ans.focus()
             elif cmd == 'focus_os_window':
@@ -627,6 +633,8 @@ def save_as_session_part2(boss: BossType, opts: SaveAsSessionOptions, path: str)
     session = '\n'.join(boss.serialize_state_as_session(path, opts))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     atomic_save(session.encode(), path)
+    from .resume import remember_session
+    remember_session(path)
     if not opts.save_only:
         boss.edit_file(path)
 

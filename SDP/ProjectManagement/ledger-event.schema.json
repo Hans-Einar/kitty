@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sdp.local/schemas/ledger-event.schema.json",
+  "title": "SDP Generic Ledger Event",
+  "description": "The stable envelope shared by append-only SDP ledger events. Release events are additionally validated against release-event.schema.json. Project-defined event types use x-<namespace>:<event-name>.",
+  "type": "object",
+  "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "actor", "commit", "payload"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "eventId": { "type": "string", "pattern": "^EVT-[A-Z0-9]+(?:[.-][A-Z0-9]+)*$" },
+    "eventType": {
+      "oneOf": [
+        {
+          "enum": [
+            "release-planned",
+            "release-version-selected",
+            "release-candidate-opened",
+            "release-verification-completed",
+            "release-approved",
+            "release-tag-created",
+            "release-published",
+            "release-yanked",
+            "release-migration-applied",
+            "release-notes-corrected"
+          ]
+        },
+        { "type": "string", "pattern": "^(work|review|verification)-[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        { "type": "string", "pattern": "^x-[a-z0-9]+(?:[.-][a-z0-9]+)*:[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" }
+      ]
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "actor": { "type": "string", "minLength": 1 },
+    "commit": { "type": ["string", "null"], "minLength": 1 },
+    "subjectId": { "type": "string", "minLength": 1 },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^REL-(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+    },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -338,3 +338,38 @@ directories, etc. into a session file. It is a convenient way to
 :ref:`complex_sessions`. The options this action takes are documented below.
 
 .. include:: generated/save-as-session.rst
+
+Choosing a saved session from the terminal
+-----------------------------------------
+
+This local build adds :code:`kitty resume`, a searchable terminal picker for
+manually saved native sessions. Configure a save shortcut:
+
+.. code-block:: conf
+
+    map f1 save_as_session --use-foreground-process --relocatable
+
+Arrange the workspace, press F1, choose a filename and review it in your editor.
+Successful saves are remembered by path. Run :code:`kitty resume`, type to filter,
+use the arrow keys to select, and press Enter to open the selected session in a
+new Kitty instance. Escape cancels. Invalid session syntax is reported in the
+picker without starting the session.
+
+The picker also discovers :file:`*.kitty-session`, :file:`*.session` and
+:file:`*.kitty_session` files directly inside the Kitty configuration directory's
+:file:`sessions` subdirectory. Use :code:`kitty resume --directory /path/to/sessions`
+for another directory, or :code:`kitty resume --list` to list available files.
+:code:`--config` and :code:`--name` preserve a custom launch profile.
+The path catalog is stored in :file:`$XDG_STATE_HOME/kitty/saved-sessions.json`
+(default :file:`~/.local/state/kitty/saved-sessions.json`). It contains paths,
+not captured commands, and is updated only when a session is manually saved.
+Existing files saved by an older Kitty build can be discovered using the sessions
+directory or :code:`--directory`.
+
+Restoration uses Kitty's native session loader. Working directories come from
+Kitty's existing process and shell integration; no :code:`cd` alias is necessary.
+Programs restart using the saved invocation. For a particular Codex conversation,
+start :code:`codex resume <ID>` or your :code:`yolo resume <ID>` alias before saving.
+The picker does not infer conversation IDs or continuously track commands.
+The native save scope and layout semantics apply; this does not save application
+memory or add desktop window position tracking.

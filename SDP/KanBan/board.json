@@ -1,0 +1,10 @@
+{
+  "ledger": "../ProjectManagement/Ledger.ndjson",
+  "namespaces": [
+    "PROJECT",
+    "KITTY"
+  ],
+  "profile": "sdp-project-management/0.2",
+  "projectId": "KITTY",
+  "schemaVersion": "0.2"
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Distributed project-management payload 0.1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "previousEventId",
+    "from",
+    "to",
+    "fromPath",
+    "toPath",
+    "reason",
+    "links"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "kind": {
+      "enum": [
+        "Scrum",
+        "Sprint",
+        "Maintenance",
+        "CodeReview",
+        "Refactor"
+      ]
+    },
+    "previousEventId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^EVT-PM-[A-Z][A-Z0-9]*-[0-9]{6,}$"
+    },
+    "from": {
+      "enum": [
+        null,
+        "planned",
+        "active",
+        "completed",
+        "canceled"
+      ]
+    },
+    "to": {
+      "enum": [
+        "planned",
+        "active",
+        "completed",
+        "canceled"
+      ]
+    },
+    "fromPath": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "toPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "links": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "members": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^KB-[A-Z][A-Z0-9]*-[0-9]{3,}$"
+      }
+    }
+  },
+  "additionalProperties": false
+}

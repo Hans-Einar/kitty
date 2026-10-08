@@ -1,0 +1,12 @@
+schemaVersion: "1.0"
+fixId: FIX-0.0.1-001
+targetVersion: "0.0.1"
+status: planned
+reasonFullSliceIsDisproportionate: TBD
+scope: []
+expectedFiles: []
+invariants: []
+nonGoals: []
+verification: []
+reviewRecord: null
+revision: null

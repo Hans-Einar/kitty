@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KanBan event payload 0.1 (validate envelope separately)",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "previousEventId",
+    "from",
+    "to",
+    "fromPath",
+    "toPath",
+    "reason",
+    "links"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*$"
+    },
+    "previousEventId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^EVT-KB-[A-Z][A-Z0-9]*-[0-9]{6,}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "from": {
+      "anyOf": [
+        {
+          "enum": [
+            "backlog",
+            "onHold",
+            "active",
+            "completed",
+            "canceled",
+            "superseded",
+            "irrelevant"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "to": {
+      "enum": [
+        "backlog",
+        "onHold",
+        "active",
+        "completed",
+        "canceled",
+        "superseded",
+        "irrelevant"
+      ]
+    },
+    "fromPath": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(backlog|onHold|active|completed|canceled|superseded|irrelevant)/#[0-9]{3,}--[^/\\\\]+\\.md$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "toPath": {
+      "type": "string",
+      "pattern": "^(backlog|onHold|active|completed|canceled|superseded|irrelevant)/#[0-9]{3,}--[^/\\\\]+\\.md$"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}

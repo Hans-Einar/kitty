@@ -11,6 +11,11 @@ def icat(args: list[str]) -> None:
     os.execl(kitten_exe(), "kitten", *args)
 
 
+def resume(args: list[str]) -> None:
+    from kitty.resume import main
+    main(args[1:])
+
+
 def list_fonts(args: list[str]) -> None:
     from kitty.fonts.list import main as list_main
     list_main(args)
@@ -106,6 +111,8 @@ entry_points = {
     # These two are here for backwards compat
     'icat': icat,
     'list-fonts': list_fonts,
+
+    'resume': resume,
 
     '+': namespaced,
 }

@@ -1,0 +1,21 @@
+schemaVersion: "1.0"
+project:
+  name: TBD
+  capabilities: []
+installed:
+  manifestPath: Framework/installed-toolkit.manifest.yaml
+release:
+  currentVersion: "0.0.0"
+  nextTargetVersion: null
+  state: unreleased
+  latestTag: null
+  latestCommit: null
+development:
+  sprintId: null
+  refactorId: null
+  iterationId: null
+  sliceId: null
+  fixId: null
+  revision: null
+migration:
+  pendingWarnings: []

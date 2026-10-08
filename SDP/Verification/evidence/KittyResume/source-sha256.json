@@ -1,0 +1,9 @@
+{
+  "kitty/resume.py": "5c0b0ccc087f4ef599b63fca3bd35fe899168d711a409b0f9f8ee4efe055da07",
+  "kitty/session.py": "2009bab172694c93da386a6868c2a8ff5a3ae34f72f363a528af37ebf16e6430",
+  "kitty/entry_points.py": "f82a468fd149ace8c30ec17312a6598ecea5cbbb576c4ba757d44c678a418653",
+  "kitty_tests/resume.py": "9c1dc6dcf8a6ff4c664d923365d3b353ceea1cddf33e772615145471174b5abe",
+  "kitty/file_urls.py": "178bf830f800efaaae4ada8a96f986bcba129dae8724f69306066ee512d3acca",
+  "kitty/screen.c": "07e8ad2b4ab9a6311411bedf7b964a35fdef65b1f09485216cd6e9a50d8c5f36",
+  "kitty/window.py": "2c3a82e7994647c5b72038076b814912b0a7806fb09e5b7a71cb9ff2dfc3d528"
+}

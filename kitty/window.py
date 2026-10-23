@@ -1174,6 +1174,10 @@ class Window:
             return False
         return get_boss().combine(action, window_for_dispatch=self, dispatch_type='MouseEvent')
 
+    def detect_wrapped_file_url(self, x: int, y: int) -> tuple[tuple[int, int, int], ...]:
+        from .file_urls import detect_wrapped_file_url
+        return detect_wrapped_file_url(self.screen, x, y, get_options().url_excluded_characters)
+
     def open_url(self, url: str, hyperlink_id: int, cwd: str | None = None) -> None:
         boss = get_boss()
         try:

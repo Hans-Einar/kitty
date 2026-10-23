@@ -343,6 +343,7 @@ option_names = (
     'cursor_underline_thickness',
     'default_pointer_shape',
     'detect_urls',
+    'detect_wrapped_file_urls',
     'dim_opacity',
     'disable_ligatures',
     'draw_minimal_borders',
@@ -541,6 +542,7 @@ class Options:
     cursor_underline_thickness: float = 2.0
     default_pointer_shape: choices_for_default_pointer_shape = 'beam'
     detect_urls: bool = True
+    detect_wrapped_file_urls: bool = False
     dim_opacity: float = 0.4
     disable_ligatures: int = 0
     draw_minimal_borders: bool = True

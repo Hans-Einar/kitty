@@ -113,6 +113,10 @@ class Callbacks:
     def open_url(self, url: str, hyperlink_id: int) -> None:
         self.open_urls.append((url, hyperlink_id))
 
+    def detect_wrapped_file_url(self, x: int, y: int):
+        from kitty.file_urls import detect_wrapped_file_url
+        return detect_wrapped_file_url(self.screen, x, y, get_options().url_excluded_characters)
+
     def clipboard_control(self, data: memoryview, is_partial: bool = False) -> None:
         self.cc_buf.append((str(data, 'utf-8'), is_partial))
 

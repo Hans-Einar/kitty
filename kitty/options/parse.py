@@ -962,6 +962,9 @@ class Parser:
     def detect_urls(self, val: str, ans: dict[str, typing.Any]) -> None:
         ans['detect_urls'] = to_bool(val)
 
+    def detect_wrapped_file_urls(self, val: str, ans: dict[str, typing.Any]) -> None:
+        ans['detect_wrapped_file_urls'] = to_bool(val)
+
     def dim_opacity(self, val: str, ans: dict[str, typing.Any]) -> None:
         ans['dim_opacity'] = unit_float(val)
 

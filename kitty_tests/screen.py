@@ -1216,6 +1216,58 @@ class TestScreen(BaseTest):
         detect_url(self)
         detect_url(self, scale=2)
 
+    def test_detect_wrapped_file_url(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from kitty.file_urls import ranges_for_lines
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / ('long-file-name-' * 3 + 'æ space#1.pdf')
+            path.touch()
+            url = path.as_uri()
+            parts = [url[i:i + 37] for i in range(0, len(url), 37)]
+
+            def screen_for(rows, enabled=True, excluded=''):
+                s = self.create_screen(cols=48, lines=16, options={
+                    'detect_wrapped_file_urls': enabled, 'url_excluded_characters': excluded,
+                })
+                s.callbacks.screen = s
+                for row, text in enumerate(rows):
+                    s.cursor.x, s.cursor.y = 0, row
+                    s.draw(text)
+                return s
+
+            rows = ['  ' + part for part in parts] + ['', '  unrelated-text']
+            s = screen_for(rows)
+            for row, part in enumerate(parts):
+                for x in range(2, len(part) + 2):
+                    s.detect_url(x, row)
+                    self.ae(s.current_url_text(), url)
+            s.detect_url(0, 1)
+            self.assertNotEqual(s.current_url_text(), url)
+            s.detect_url(3, len(parts) + 1)
+            self.assertNotEqual(s.current_url_text(), url)
+
+            # Respect opt-out, explicit newline exclusions, different margins,
+            # separate URLs, prose, blank lines, and missing local targets.
+            for bad_rows, enabled, excluded in (
+                (rows, False, ''), (rows, True, '\n'), (rows, True, '%'),
+                ([rows[0], ' ' + rows[1]] + rows[2:], True, ''),
+                ([rows[0], '  https://example.com'] + rows[2:], True, ''),
+                ([rows[0], '  unrelated words'] + rows[2:], True, ''),
+                ([rows[0], ''] + rows[1:], True, ''),
+            ):
+                s = screen_for(bad_rows, enabled, excluded)
+                s.detect_url(3, 0)
+                self.assertNotEqual(s.current_url_text(), url)
+
+            path.unlink()
+            ranges_for_lines.cache_clear()
+            s = screen_for(rows)
+            s.detect_url(3, 0)
+            self.assertNotEqual(s.current_url_text(), url)
+
     def test_prompt_marking(self):
         # ]]]]]]]]]]]]]]]]}}}}}}}}}}}}}}}}))))))))))))))))))))))
 

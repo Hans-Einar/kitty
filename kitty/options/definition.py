@@ -683,6 +683,17 @@ how hyperlinks (as opposed to plain text URLs) are displayed.
 '''
     )
 
+opt('detect_wrapped_file_urls', 'no',
+    option_type='to_bool', ctype='bool',
+    long_text='''
+Recognize standalone local file URLs split across indented lines by terminal
+applications. The fragments must have the same indentation and form an existing
+local path. Only ASCII URLs (with non-ASCII characters percent-encoded) are
+supported. Up to 16 visible lines are joined. This performs local filesystem
+lookups while hovering and is disabled by default. Explicit hyperlinks take
+precedence. Newline exclusion in :opt:`url_excluded_characters` disables joining.
+''')
+
 opt('url_excluded_characters', '',
     option_type='python_string', ctype='!url_excluded_characters',
     long_text='''

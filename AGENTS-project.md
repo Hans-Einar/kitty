@@ -1,9 +1,10 @@
 # Kitty workstation development
 
 This is a local clone of upstream Kitty v0.43.1. The working branch is
-`wmkitty-multiline-file-links`; there is no published personal fork yet.
-Preserve the pre-existing uncommitted multiline file URL changes. Do not include
-those changes in an unrelated commit or imply they are upstream releases.
+`wmkitty-multiline-file-links`; the personal fork is `Hans-Einar/kitty`.
+The owner authorized committing and publishing the existing multiline file URL
+changes on 2026-10-23. Keep them scoped separately from unrelated changes and
+do not imply they are upstream releases.
 
 Use the installed SDP 2.1.0 profile and project namespace KITTY for new work.
 Existing PROJECT installation identities remain unchanged. Read the active

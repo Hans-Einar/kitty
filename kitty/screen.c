@@ -4033,6 +4033,34 @@ extend_url(Screen *screen, Line *line, index_type *x, index_type *y, char_type s
     }
 }
 
+static void add_url_range(Screen *self, index_type start_x, index_type start_y, index_type end_x, index_type end_y, bool is_hyperlink);
+
+static bool
+detect_wrapped_file_url(Screen *screen, unsigned int x, unsigned int y) {
+    if (!OPT(detect_wrapped_file_urls) || screen->callbacks == Py_None || is_excluded_from_url('\n')) return false;
+    RAII_PyObject(ranges, PyObject_CallMethod(screen->callbacks, "detect_wrapped_file_url", "II", x, y));
+    if (!ranges) { PyErr_Print(); return false; }
+    if (!PyTuple_Check(ranges) || PyTuple_GET_SIZE(ranges) < 2) return false;
+    screen->url_ranges.count = 0;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(ranges); i++) {
+        unsigned int left, row, right;
+        if (!PyArg_ParseTuple(PyTuple_GET_ITEM(ranges, i), "III", &left, &row, &right)) {
+            PyErr_Clear(); screen->url_ranges.count = 0; return false;
+        }
+        if (row >= screen->lines || left > right || right >= screen->columns) {
+            screen->url_ranges.count = 0; return false;
+        }
+        Line *line = screen_visual_line(screen, row);
+        for (unsigned int col = left; col <= right; col++) {
+            if (line->cpu_cells[col].is_multicell || line->cpu_cells[col].hyperlink_id) {
+                screen->url_ranges.count = 0; return false;
+            }
+        }
+        add_url_range(screen, left, row, right, row, false);
+    }
+    return true;
+}
+
 int
 screen_detect_url(Screen *screen, unsigned int x, unsigned int y) {
     bool has_url = false;
@@ -4050,6 +4078,9 @@ screen_detect_url(Screen *screen, unsigned int x, unsigned int y) {
         screen_mark_hyperlink(screen, x, y);
         return hid;
     }
+    if (detect_wrapped_file_url(screen, x, y)) return -1;
+    // The callback reads visual lines, which reuses screen's scratch Line.
+    line = screen_visual_line(screen, y);
     char_type sentinel = 0;
     const bool newlines_allowed = !is_excluded_from_url('\n');
     index_type last_hostname_char_pos = screen->columns;

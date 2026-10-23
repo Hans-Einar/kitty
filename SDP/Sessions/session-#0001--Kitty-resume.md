@@ -2,7 +2,8 @@
 
 ## Session roadmap
 
-Latest recorded turn: T003. Manual-save implementation and resize compatibility repair complete.
+Latest recorded turn: T004. Existing wrapped-link changes selected for publication;
+manual-save implementation and resize compatibility repair remain complete.
 
 | State | Step | Outcome |
 | --- | --- | --- |
@@ -129,3 +130,16 @@ PLAN-KITTY-0001 canceled. Follow-up MAINT-KITTY-0001 is completed.
 This is agent self-verification, not independent review.
 Native save/load boundaries remain; no custom geometry or application memory
 restoration is claimed. Blueprints remain future SDP infrastructure.
+
+### T004 — 2026-10-23, existing-change publication
+
+- Owner prompts (verbatim): “ahh ja kan du oppdatere alle repos i ~/git  til å bruke ssh?”
+  and “du kan også committe og pushe alle som har ucommitede endringer etterpå”.
+- Scope: convert Git remotes to SSH, commit the already existing wrapped file URL
+  changes, and publish the current `wmkitty-multiline-file-links` branch to the
+  newly created `Hans-Einar/kitty` fork. Upstream is retained as `upstream`.
+- No implementation changes, new lifecycle plan, runtime installation or restart.
+  Prior statements that the link changes were uncommitted describe historical state.
+- Verification before publication: `./test.py --module screen detect_wrapped_file_url
+  detect_url hyperlinks` passed all three tests with the existing local build.
+- This is a branch publication, not an upstream release or a new independent review.

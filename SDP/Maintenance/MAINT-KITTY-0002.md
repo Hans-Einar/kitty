@@ -4,7 +4,7 @@
 | --- | --- |
 | id | MAINT-KITTY-0002 |
 | project | KITTY |
-| state | active |
+| state | completed |
 | PlanType | MaintenancePlan |
 | BranchPolicy | current |
 | CommitPolicy | milestone |
@@ -44,4 +44,24 @@ requirements/design remain applicable; no new user workflow is selected.
 
 Merge conflicts resolved; isolated build, all 1397 tests (12 skipped), lint and
 GUI/PTY acceptance passed. See [verification](../Verification/Kitty050Upgrade.md).
-Installation into the main checkout and publication remain pending.
+Installed source commit: `1b0a167c002dd3f1ffc6ca2ce950e1153e29df28`.
+The main checkout was fast-forwarded and `./dev.sh build` completed there.
+`/home/warloc/bin/kitty --version` reports 0.50.0; resume help works; Python
+imports resolve to the main checkout. An isolated GUI startup through the real
+wrapper and owner profile passed. The existing saved session parsed successfully.
+Source hashes still match the tested candidate.
+
+Published implementation commit 1b0a167c0 to `personal/main` and verified the
+GitHub ref with `git ls-remote`. This closeout is a documentation-only follow-up.
+All pre-upgrade commits remain ancestors of main; no force push was used.
+The local upstream fetch mapping now includes master as well as the old tag.
+
+Backup: `/home/warloc/.local/state/kitty-upgrade-backup/20261111-0.43.1` contains
+the old source archive, compiled runtime files and commit manifest. Local branch
+`backup/pre-kitty-0.50.0-20261111` also retains the old main tip. No running user
+terminal was killed or reset. New windows use 0.50.0; old processes remain on
+their loaded version until the owner closes them.
+
+No remaining work for this upgrade. Automatic terminal-mode cleanup after SSH
+disconnection remains a separate, unimplemented improvement; this delivery
+makes no claim that upgrading alone fixes stale mouse reporting.

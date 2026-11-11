@@ -41,8 +41,12 @@ active terminal. Upgrade completion is not evidence of resolving that symptom.
 
 ## Activation
 
-The tested source will be fast-forwarded into the workstation main checkout and
-built there because the development launcher embeds its source path. Existing
-Kitty processes are left running. New windows use the upgraded build. Final
-installation/publication evidence is recorded in
+The tested source was committed as 1b0a167c002dd3f1ffc6ca2ce950e1153e29df28,
+fast-forwarded into the workstation main checkout and built there because the
+development launcher embeds its source path. Source hashes were rechecked.
+The actual wrapper reports 0.50.0 and resume help works. An isolated GUI startup
+using the owner's profile passed; the existing saved session also validates.
+See [installed smoke result](evidence/Kitty050Upgrade/installed-result.json).
+Existing Kitty processes were left running. New windows use the upgraded build.
+Installation/publication evidence is recorded in
 [MAINT-KITTY-0002](../Maintenance/MAINT-KITTY-0002.md).

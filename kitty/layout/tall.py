@@ -1,23 +1,25 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2020, Kovid Goyal <kovid at kovidgoyal.net>
 
-from collections.abc import Generator, Sequence
+import sys
+from collections.abc import Generator, Iterator, Sequence
 from itertools import islice, repeat
 from typing import Any
 
 from kitty.borders import BorderColor
 from kitty.conf.utils import to_bool
-from kitty.types import Edges, WindowMapper
+from kitty.fast_data_types import BOTTOM_EDGE, RIGHT_EDGE
+from kitty.types import Edges, NeighborsMap, WindowMapper, WindowResizeDragData
 from kitty.typing_compat import EdgeLiteral, WindowType
 from kitty.window_list import WindowGroup, WindowList
 
 from .base import (
     BorderLine,
+    DragOverlayMode,
     Layout,
     LayoutData,
     LayoutDimension,
     LayoutOpts,
-    NeighborsMap,
     lgd,
     normalize_biases,
     safe_increment_bias,
@@ -25,20 +27,41 @@ from .base import (
 from .vertical import borders
 
 
+def drag_resize_target_windows(
+    click_window: WindowType, edges: int, x: float, y: float, num_full_size_windows: int, all_windows: WindowList, main_is_horizontal: bool = True
+) -> WindowResizeDragData:
+    groups = tuple(all_windows.iter_all_layoutable_groups())
+    horizontal = vertical = click_window
+    min_dist = float(sys.maxsize)
+    height_increases_downwards = bool(edges & BOTTOM_EDGE)
+    width_increases_rightwards = bool(edges & RIGHT_EDGE)
+    for gr in groups[num_full_size_windows:]:
+        if gr.windows:
+            w = gr.windows[-1]
+            g = w.geometry
+            if main_is_horizontal:
+                if (dist := min(abs(g.top - y), abs(g.bottom - y))) < min_dist:
+                    min_dist = dist
+                    vertical = w
+                    height_increases_downwards = y > g.top + (g.bottom - g.top) / 2
+            else:
+                if (dist := min(abs(g.left - x), abs(g.right - x))) < min_dist:
+                    min_dist = dist
+                    horizontal = w
+                    width_increases_rightwards = x > g.left + (g.right - g.left) / 2
+    return WindowResizeDragData(horizontal.id, width_increases_rightwards, vertical.id, height_increases_downwards)
+
+
 def neighbors_for_tall_window(
-        num_full_size_windows: int,
-        window: WindowType,
-        all_windows: WindowList,
-        mirrored: bool = False,
-        main_is_horizontal: bool = True
+    num_full_size_windows: int, window: WindowType, all_windows: WindowList, mirrored: bool = False, main_is_horizontal: bool = True
 ) -> NeighborsMap:
     wg = all_windows.group_for_window(window)
     assert wg is not None
     groups = tuple(all_windows.iter_all_layoutable_groups())
     idx = groups.index(wg)
-    prev = None if idx == 0 else groups[idx-1]
-    nxt = None if idx == len(groups) - 1 else groups[idx+1]
-    ans: NeighborsMap = {'left': [], 'right': [], 'top': [], 'bottom': []}
+    prev = None if idx == 0 else groups[idx - 1]
+    nxt = None if idx == len(groups) - 1 else groups[idx + 1]
+    ans: NeighborsMap = {}
     main_before: EdgeLiteral = 'left' if main_is_horizontal else 'top'
     main_after: EdgeLiteral = 'right' if main_is_horizontal else 'bottom'
     cross_before: EdgeLiteral = 'top' if main_is_horizontal else 'left'
@@ -51,7 +74,7 @@ def neighbors_for_tall_window(
         if nxt is not None:
             ans[main_after] = [nxt.id]
     elif idx == num_full_size_windows - 1:
-        ans[main_after] = [w.id for w in groups[idx+1:]]
+        ans[main_after] = [w.id for w in groups[idx + 1 :]]
     else:
         ans[main_before] = [groups[num_full_size_windows - 1].id]
         if idx > num_full_size_windows and prev is not None:
@@ -91,7 +114,7 @@ class TallLayoutOpts(LayoutOpts):
 def set_bias(biases: Sequence[float], idx: int, target: float) -> list[float]:
     remainder = 1 - target
     previous_remainder = sum(x for i, x in enumerate(biases) if i != idx)
-    ans = [1. for i in range(len(biases))]
+    ans = [1.0 for i in range(len(biases))]
     for i in range(len(biases)):
         if i == idx:
             ans[i] = target
@@ -101,11 +124,11 @@ def set_bias(biases: Sequence[float], idx: int, target: float) -> list[float]:
 
 
 class Tall(Layout):
-
     name = 'tall'
     main_is_horizontal = True
     no_minimal_window_borders = True
-    layout_opts = TallLayoutOpts({})
+    drag_overlay_mode = DragOverlayMode.axis_y
+    layout_opts: TallLayoutOpts = TallLayoutOpts({})
     main_axis_layout = Layout.xlayout
     perp_axis_layout = Layout.ylayout
 
@@ -134,30 +157,41 @@ class Tall(Layout):
         after_layout = tuple(self.variable_layout(all_windows, self.biased_map))
         return before_layout == after_layout
 
-    def apply_bias(self, idx: int, increment: float, all_windows: WindowList, is_horizontal: bool = True) -> bool:
+    def apply_bias(self, window_id: int, increment: float, all_windows: WindowList, is_horizontal: bool = True) -> bool:
         num_windows = all_windows.num_groups
         if self.main_is_horizontal == is_horizontal:
             before_main_bias = self.main_bias
             ncols = self.num_full_size_windows + 1
-            biased_col = idx if idx < self.num_full_size_windows else (ncols - 1)
-            self.main_bias = [
-                safe_increment_bias(self.main_bias[i], increment * (1 if i == biased_col else -1)) for i in range(ncols)
-            ]
+            biased_col = window_id if window_id < self.num_full_size_windows else (ncols - 1)
+            self.main_bias = [safe_increment_bias(self.main_bias[i], increment * (1 if i == biased_col else -1)) for i in range(ncols)]
             self.main_bias = normalize_biases(self.main_bias)
             return self.main_bias != before_main_bias
 
         num_of_short_windows = num_windows - self.num_full_size_windows
-        if idx < self.num_full_size_windows or num_of_short_windows < 2:
+        if window_id < self.num_full_size_windows or num_of_short_windows < 2:
             return False
-        idx -= self.num_full_size_windows
+        window_id -= self.num_full_size_windows
         before_layout = tuple(self.variable_layout(all_windows, self.biased_map))
-        before = self.biased_map.get(idx, 0.)
+        before = self.biased_map.get(window_id, 0.0)
         candidate = self.biased_map.copy()
-        candidate[idx] = after = before + increment
+        candidate[window_id] = after = before + increment
         if before_layout == tuple(self.variable_layout(all_windows, candidate)):
             return False
         self.biased_map = candidate
         return before != after
+
+    def apply_fractional_bias(self, window_idx: int, increment: float, all_windows: WindowList, is_horizontal: bool) -> bool:
+        # Main-axis biases can keep changing after the visible size stops
+        # changing. Do not count those changes as remaining resize steps.
+        layout = self.simple_layout if all_windows.num_groups <= self.num_full_size_windows + 1 else self.full_layout
+        before_layout = tuple((x, y) for _, x, y, _ in layout(all_windows))
+        before_bias, before_map = self.main_bias, self.biased_map
+        if not self.apply_bias(window_idx, increment, all_windows, is_horizontal):
+            return False
+        if before_layout == tuple((x, y) for _, x, y, _ in layout(all_windows)):
+            self.main_bias, self.biased_map = before_bias, before_map
+            return False
+        return True
 
     def simple_layout(self, all_windows: WindowList) -> Generator[tuple[WindowGroup, LayoutData, LayoutData, bool], None, None]:
         num = all_windows.num_groups
@@ -184,7 +218,7 @@ class Tall(Layout):
         start = lgd.central.top if is_fat else lgd.central.left
         size = 0
         if mirrored:
-            fsg = groups[:self.num_full_size_windows + 1]
+            fsg = groups[: self.num_full_size_windows + 1]
             xlayout = self.main_axis_layout(reversed(fsg), bias=main_bias)
             for i, wg in enumerate(reversed(fsg)):
                 xl = next(xlayout)
@@ -218,12 +252,12 @@ class Tall(Layout):
                 xl, yl = yl, xl
             yield wg, xl, yl, False
 
-    def do_layout(self, all_windows: WindowList) -> None:
-        num = all_windows.num_groups
+    def do_layout(self, windows: WindowList) -> None:
+        num = windows.num_groups
         if num == 1:
-            self.layout_single_window_group(next(all_windows.iter_all_layoutable_groups()))
+            self.layout_single_window_group(next(windows.iter_all_layoutable_groups()))
             return
-        layouts = (self.simple_layout if num <= self.num_full_size_windows + 1 else self.full_layout)(all_windows)
+        layouts = (self.simple_layout if num <= self.num_full_size_windows + 1 else self.full_layout)(windows)
         for wg, xl, yl, is_full_size in layouts:
             self.set_window_group_geometry(wg, xl, yl)
 
@@ -257,7 +291,7 @@ class Tall(Layout):
                 raise ValueError('layout_action bias must contain at least one number between 10 and 90')
             biases = args[0].split()
             if len(biases) == 1:
-                biases.append("50")
+                biases.append('50')
             try:
                 i = biases.index(str(self.layout_opts.bias)) + 1
             except ValueError:
@@ -270,25 +304,25 @@ class Tall(Layout):
                 return False
         return None
 
-    def minimal_borders(self, all_windows: WindowList) -> Generator[BorderLine, None, None]:
-        num = all_windows.num_groups
+    def minimal_borders(self, windows: WindowList) -> Iterator[BorderLine]:
+        num = windows.num_groups
         if num < 2 or not lgd.draw_minimal_borders:
             return
         try:
-            bw = next(all_windows.iter_all_layoutable_groups()).effective_border()
+            bw = next(windows.iter_all_layoutable_groups()).effective_border()
         except StopIteration:
             bw = 0
         if not bw:
             return
         if num <= self.num_full_size_windows + 1:
-            layout = (x[:3] for x in self.simple_layout(all_windows))
-            yield from borders(layout, self.main_is_horizontal, all_windows)
+            layout = (x[:3] for x in self.simple_layout(windows))
+            yield from borders(layout, self.main_is_horizontal, windows)
             return
         main_layouts: list[tuple[WindowGroup, LayoutData, LayoutData]] = []
         perp_borders: list[BorderLine] = []
-        layouts = (self.simple_layout if num <= self.num_full_size_windows else self.full_layout)(all_windows)
-        needs_borders_map = all_windows.compute_needs_borders_map(lgd.draw_active_borders)
-        active_group = all_windows.active_group
+        layouts = (self.simple_layout if num <= self.num_full_size_windows else self.full_layout)(windows)
+        needs_borders_map = windows.compute_needs_borders_map(lgd.draw_active_borders)
+        active_group = windows.active_group
         mirrored = self.layout_opts.mirrored
         for wg, xl, yl, is_full_size in layouts:
             if is_full_size:
@@ -297,60 +331,52 @@ class Tall(Layout):
                 color = BorderColor.inactive
                 if needs_borders_map.get(wg.id):
                     color = BorderColor.active if wg is active_group else BorderColor.bell
+                wid = wg.active_window_id
+                mult = 1 if mirrored else -1
+
+                def h(left: int, right: int, top: int, mult: int) -> None:
+                    e = Edges(left, top, right, top + bw)
+                    perp_borders.append(BorderLine(e, color, mult * wid, True))
+
+                def v(top: int, bottom: int, left: int, mult: int) -> None:
+                    e = Edges(left, top, left + bw, bottom)
+                    perp_borders.append(BorderLine(e, color, mult * wid, False))
+
                 if self.main_is_horizontal:
-                    e1 = Edges(
-                        xl.content_pos - xl.space_before,
+                    h(xl.content_pos - xl.space_before, xl.content_pos + xl.content_size + xl.space_after, yl.content_pos - yl.space_before, -1)
+                    v(
                         yl.content_pos - yl.space_before,
-                        xl.content_pos + xl.content_size + xl.space_after,
-                        yl.content_pos - yl.space_before + bw
-                    )
-                    e3 = Edges(
-                        xl.content_pos - xl.space_before,
-                        yl.content_pos + yl.content_size + yl.space_after - bw,
-                        xl.content_pos + xl.content_size + xl.space_after,
                         yl.content_pos + yl.content_size + yl.space_after,
-                    )
-                    e2 = Edges(
                         xl.content_pos + ((xl.content_size + xl.space_after - bw) if mirrored else -xl.space_before),
-                        yl.content_pos - yl.space_before,
-                        xl.content_pos + ((xl.content_size + xl.space_after) if mirrored else (bw - xl.space_before)),
-                        yl.content_pos + yl.content_size + yl.space_after,
+                        mult,
+                    )
+                    h(
+                        xl.content_pos - xl.space_before,
+                        xl.content_pos + xl.content_size + xl.space_after,
+                        yl.content_pos + yl.content_size + yl.space_after - bw,
+                        1,
                     )
                 else:
-                    e1 = Edges(
+                    v(yl.content_pos - yl.space_before, yl.content_pos + yl.content_size + yl.space_after, xl.content_pos - xl.space_before, -1)
+                    h(
                         xl.content_pos - xl.space_before,
-                        yl.content_pos - yl.space_before,
-                        xl.content_pos - xl.space_before + bw,
-                        yl.content_pos + yl.content_size + yl.space_after,
-                    )
-                    e3 = Edges(
-                        xl.content_pos + xl.content_size + xl.space_after - bw,
-                        yl.content_pos - yl.space_before,
                         xl.content_pos + xl.content_size + xl.space_after,
-                        yl.content_pos + yl.content_size + yl.space_after,
-                    )
-                    e2 = Edges(
-                        xl.content_pos - xl.space_before,
                         yl.content_pos + ((yl.content_size + yl.space_after - bw) if mirrored else -yl.space_before),
-                        xl.content_pos + xl.content_size + xl.space_after,
-                        yl.content_pos + ((yl.content_size + yl.space_after) if mirrored else (bw - yl.space_before)),
+                        mult,
                     )
-                perp_borders.append(BorderLine(e1, color))
-                perp_borders.append(BorderLine(e2, color))
-                perp_borders.append(BorderLine(e3, color))
+                    v(
+                        yl.content_pos - yl.space_before,
+                        yl.content_pos + yl.content_size + yl.space_after,
+                        xl.content_pos + xl.content_size + xl.space_after - bw,
+                        1,
+                    )
 
         mirrored = self.layout_opts.mirrored
-        yield from borders(
-            main_layouts, self.main_is_horizontal, all_windows,
-            start_offset=int(not mirrored), end_offset=int(mirrored)
-        )
+        yield from borders(main_layouts, self.main_is_horizontal, windows, start_offset=int(not mirrored), end_offset=int(mirrored))
         yield from perp_borders[1:-1]
 
     def layout_state(self) -> dict[str, Any]:
-        return {
-            'main_bias': self.main_bias,
-            'biased_map': self.biased_map
-        }
+        return {'main_bias': self.main_bias, 'biased_map': self.biased_map}
 
     def set_layout_state(self, layout_state: dict[str, Any], map_group_id: WindowMapper) -> bool:
         self.main_bias = layout_state['main_bias']
@@ -358,10 +384,20 @@ class Tall(Layout):
         self.layout_opts = TallLayoutOpts(layout_state['opts'])
         return True
 
+    def drag_resize_target_windows(
+        self,
+        click_window: WindowType,
+        x: float,
+        y: float,
+        edges: int,
+        all_windows: WindowList,
+    ) -> WindowResizeDragData:
+        return drag_resize_target_windows(click_window, edges, x, y, self.num_full_size_windows, all_windows, self.main_is_horizontal)
+
 
 class Fat(Tall):
-
     name = 'fat'
     main_is_horizontal = False
+    drag_overlay_mode = DragOverlayMode.axis_x
     main_axis_layout = Layout.ylayout
     perp_axis_layout = Layout.xlayout

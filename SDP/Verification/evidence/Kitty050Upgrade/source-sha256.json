@@ -1,0 +1,19 @@
+{
+  "docs/sessions.rst": "6d3e2780560a62bb81ca61778505da1286b9843a4f795e7aa790209ecfcc6282",
+  "kittens/tui/loop.py": "662e2e654524bab9c86a3099e779325be94f4f11c4c6ad403d8d6bdce7fbc023",
+  "kitty/entry_points.py": "0106cda49bdce6cc2273989a4b83bf1ae7ace8e584f18063b2f7af439f258af8",
+  "kitty/file_urls.py": "8fc18ed81246637e6cd799359b3be17cbb7b5354a9c2e27c11c204968fc00f56",
+  "kitty/options/definition.py": "324b5f6ce947497cdf9ffae5af36836524b1356198e0544e3c60ad8ade277162",
+  "kitty/options/parse.py": "2e464a8062f1bb62e1366f9c6f88b02dc0b74d2b690b8c08ccedc1df8200d59b",
+  "kitty/options/to-c-generated.h": "4504f7b378ddbcddd783b47b7fe11876407075283dafea575a4a61e7e9ce5b2e",
+  "kitty/options/types.py": "22b7a6ddf6712fb4e1854fb39ae9d29895430292a73997b85f7f483c52501929",
+  "kitty/resume.py": "085e65b08069cc9ac67add55cd2f1242dc2549f026e26a8d2ff36c2c22fb513c",
+  "kitty/screen.c": "a506f954e2dcc0b8c6548b88dba2af00727e2c5f671a9d62e3b90e210d7044dc",
+  "kitty/session.py": "35549d673e520b8bf7c7f50f4716f0db0c34dab02ebe1b6c4fd9a95725564c21",
+  "kitty/state.h": "1534ef3bf3a1f351f23d6a69da28d0a1f8d4845d7a98a95662b1f593bca9856c",
+  "kitty/window.py": "d96e319378d78451eb06611b96bd3007fa1f245d71800377df1ee42efd80e52a",
+  "kitty_tests/base.py": "0d13fac85e5278b1e0ad918fe369253282b4cccf74c7c2e50afd478f13aac4ad",
+  "kitty_tests/resume.py": "89942a5796aeb0f519738a83b94243db851543d12515130947d9a5586574411b",
+  "kitty_tests/screen.py": "dee4f2a6cc4e14910a186cf918d8a89c72f63cac0fc37642907be143d285e68f",
+  "kitty_tests/tui.py": "35d08f6c4f7f565457bc2721ca2fb50fa220c73c4d670a162f6a1fd24469390d"
+}

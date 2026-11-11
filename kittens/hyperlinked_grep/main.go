@@ -47,7 +47,7 @@ func get_options_for_rg() (expecting_args map[string]bool, alias_map map[string]
 				expecting_arg := strings.Contains(s, "=")
 				single_letter_aliases := make([]string, 0, 1)
 				long_option_names := make([]string, 0, 1)
-				for _, x := range strings.Split(s, ",") {
+				for x := range strings.SplitSeq(s, ",") {
 					x = strings.TrimSpace(x)
 					if strings.HasPrefix(x, "--") {
 						lon, _, _ := strings.Cut(x[2:], "=")
@@ -136,7 +136,7 @@ func parse_args(args ...string) (delegate_to_rg bool, sanitized_args []string, k
 			if !found || k != "hyperlink" {
 				return fmt.Errorf("Unknown --kitten option: %s", val)
 			}
-			for _, x := range strings.Split(v, ",") {
+			for x := range strings.SplitSeq(v, ",") {
 				switch x {
 				case "none":
 					kitten_opts.context_lines = false
@@ -232,14 +232,23 @@ func parse_args(args ...string) (delegate_to_rg bool, sanitized_args []string, k
 						sanitized_args = append(sanitized_args, x)
 					}
 				}
-			} else if strings.HasPrefix(x, "-") {
+			} else if x != "-" && strings.HasPrefix(x, "-") {
+				// rg semantics: everything after the first short option that
+				// takes a value is that value, with an optional leading = stripped
 				ok := true
-				chars := make([]string, len(x)-1)
-				for i, ch := range x[1:] {
-					chars[i] = string(ch)
-					_, ok = alias_map[string(ch)]
-					if !ok {
+				chars := make([]string, 0, len(x)-1)
+				option_arg, has_option_arg := "", false
+				for j, ch := range x[1:] {
+					chars = append(chars, string(ch))
+					var target string
+					if target, ok = alias_map[string(ch)]; !ok {
 						sanitized_args = append(sanitized_args, x)
+						break
+					}
+					if options_that_expect_args[target] {
+						if rest := x[j+2:]; rest != "" {
+							option_arg, has_option_arg = strings.TrimPrefix(rest, "="), true
+						}
 						break
 					}
 				}
@@ -247,7 +256,11 @@ func parse_args(args ...string) (delegate_to_rg bool, sanitized_args []string, k
 					for _, ch := range chars {
 						target := alias_map[ch]
 						if options_that_expect_args[target] {
-							expecting_option_arg = target
+							if !has_option_arg {
+								expecting_option_arg = target
+							} else if err = handle_option_arg(target, option_arg, false); err != nil {
+								return
+							}
 						} else {
 							handle_bool_option(target)
 							sanitized_args = append(sanitized_args, "-"+ch)

@@ -22,7 +22,7 @@ class Version(NamedTuple):
 
 appname: str = 'kitty'
 kitty_face = '🐱'
-version: Version = Version(0, 43, 1)
+version: Version = Version(0, 50, 0)
 str_version: str = '.'.join(map(str, version))
 _plat = sys.platform.lower()
 is_macos: bool = 'darwin' in _plat
@@ -35,6 +35,20 @@ kitty_run_data: dict[str, Any] = getattr(sys, 'kitty_run_data', {})
 launched_by_launch_services = kitty_run_data.get('launched_by_launch_services', False)
 is_quick_access_terminal_app = kitty_run_data.get('is_quick_access_terminal_app', False)
 unserialize_launch_flag = 'kitty-unserialize-data='
+_slangc: tuple[str, ...] = ()
+
+
+def slangc() -> tuple[str, ...]:
+    global _slangc
+    if not _slangc:
+        from kitty.fast_data_types import DEVELOP_ROOT, Shlex
+
+        if DEVELOP_ROOT:
+            _slangc = (os.path.join(DEVELOP_ROOT, 'bin', 'slangc'),)
+        else:
+            _slangc = tuple(Shlex(os.environ.get('SLANGC', 'slangc'), False))
+    return _slangc
+
 
 if getattr(sys, 'frozen', False):
     extensions_dir: str = kitty_run_data['extensions_dir']
@@ -60,8 +74,11 @@ if getattr(sys, 'frozen', False):
             ans = os.path.dirname(os.path.dirname(ans))
         ans = os.path.join(ans, 'kitty')
         return ans
+
     kitty_base_dir = get_frozen_base()
-    del get_frozen_base
+    if rpath := kitty_run_data.get('bundle_exe_dir'):
+        _slangc = (os.path.join(rpath, 'slangc'),)
+    del get_frozen_base, rpath
 else:
     kitty_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     extensions_dir = os.path.join(kitty_base_dir, 'kitty')
@@ -95,11 +112,15 @@ def _get_config_dir() -> str:
         return str(cdir)
     import atexit
     import tempfile
+
     ans = tempfile.mkdtemp(prefix='kitty-conf-')
+
     def cleanup() -> None:
         import shutil
+
         with suppress(Exception):
             shutil.rmtree(ans)
+
     atexit.register(cleanup)
     return ans
 
@@ -107,6 +128,19 @@ def _get_config_dir() -> str:
 config_dir = _get_config_dir()
 del _get_config_dir
 defconf = os.path.join(config_dir, 'kitty.conf')
+# When True, auxiliary files in config_dir that kitty loads implicitly, such as
+# the automatic color theme files, open-actions.conf, etc. are ignored. Set when
+# kitty is run with --config=NONE.
+_ignore_config_dir_files = False
+
+
+def set_ignore_config_dir_files(val: bool) -> None:
+    global _ignore_config_dir_files
+    _ignore_config_dir_files = val
+
+
+def config_dir_files_ignored() -> bool:
+    return _ignore_config_dir_files
 
 
 @run_once
@@ -128,6 +162,7 @@ def runtime_dir() -> str:
         candidate = os.path.abspath(os.environ['KITTY_RUNTIME_DIRECTORY'])
     elif is_macos:
         from .fast_data_types import user_cache_dir
+
         candidate = user_cache_dir()
     elif 'XDG_RUNTIME_DIR' in os.environ:
         candidate = os.path.abspath(os.environ['XDG_RUNTIME_DIR'])
@@ -137,6 +172,7 @@ def runtime_dir() -> str:
             candidate = os.path.join(cache_dir(), 'run')
     os.makedirs(candidate, exist_ok=True)
     import stat
+
     if stat.S_IMODE(os.stat(candidate).st_mode) != 0o700:
         os.chmod(candidate, 0o700)
     return candidate
@@ -144,6 +180,7 @@ def runtime_dir() -> str:
 
 def wakeup_io_loop() -> None:
     from .fast_data_types import get_boss
+
     b = get_boss()
     if b is not None:
         b.child_monitor.wakeup()
@@ -154,6 +191,7 @@ logo_png_file = os.path.join(kitty_base_dir, 'logo', 'kitty.png')
 beam_cursor_data_file = os.path.join(kitty_base_dir, 'logo', 'beam-cursor.png')
 shell_integration_dir = os.path.join(kitty_base_dir, 'shell-integration')
 fonts_dir = os.path.join(kitty_base_dir, 'fonts')
+shaders_dir = os.path.join(kitty_base_dir, 'shaders')
 try:
     shell_path = os.environ.get('SHELL') or pwd.getpwuid(os.geteuid()).pw_shell or '/bin/sh'
 except KeyError:
@@ -168,11 +206,10 @@ ssh_control_master_template = 'kssh-{kitty_pid}-{ssh_placeholder}'
 # Update the spec in docs/desktop-notifications.rst if you change this.
 standard_icon_names = {
     'error': ('dialog-error', '☠'),
-    'warning': ('dialog-warning','⚠'),
+    'warning': ('dialog-warning', '⚠'),
     'warn': ('dialog-warning', '⚠'),
     'info': ('dialog-information', 'ℹ'),
     'question': ('dialog-question', '❔'),
-
     'help': ('system-help', '📖'),
     'file-manager': ('system-file-manager', '🗄'),
     'system-monitor': ('utilities-system-monitor', '🎛'),
@@ -196,14 +233,15 @@ def glfw_path(module: str) -> str:
 
 
 def detect_if_wayland_ok() -> bool:
-    if 'WAYLAND_DISPLAY' not in os.environ and 'WAYLAND_SOCKET' not in os.environ:
+    if not os.environ.get('WAYLAND_DISPLAY') and not os.environ.get('WAYLAND_SOCKET'):
         return False
-    if 'KITTY_DISABLE_WAYLAND' in os.environ:
+    if os.environ.get('KITTY_DISABLE_WAYLAND'):
         return False
     wayland = glfw_path('wayland')
     if not os.path.exists(wayland):
         return False
     import ctypes
+
     with suppress(Exception):
         setattr(detect_if_wayland_ok, 'keep_module_loaded', ctypes.CDLL(wayland))
         return True
@@ -233,27 +271,15 @@ def running_in_kitty(set_val: bool | None = None) -> bool:
 
 
 def list_kitty_resources(package: str = 'kitty') -> Iterator[str]:
-    try:
-        if sys.version_info[:2] < (3, 10):
-            raise ImportError("importlib.resources.files() doesn't work with frozen builds on python 3.9")
-        from importlib.resources import files
-    except ImportError:
-        from importlib.resources import contents
-        return iter(contents(package))
-    else:
-        return (path.name for path in files(package).iterdir())
+    from importlib.resources import files
+
+    return (path.name for path in files(package).iterdir())
 
 
 def read_kitty_resource(name: str, package_name: str = 'kitty') -> bytes:
-    try:
-        if sys.version_info[:2] < (3, 10):
-            raise ImportError("importlib.resources.files() doesn't work with frozen builds on python 3.9")
-        from importlib.resources import files
-    except ImportError:
-        from importlib.resources import read_binary
-        return read_binary(package_name, name)
-    else:
-        return (files(package_name) / name).read_bytes()
+    from importlib.resources import files
+
+    return (files(package_name) / name).read_bytes()
 
 
 def website_url(doc_name: str = '', website: str = website_base_url) -> str:
@@ -273,6 +299,7 @@ def clear_handled_signals(*a: Any) -> None:
     if not handled_signals:
         return
     import signal
+
     if hasattr(signal, 'pthread_sigmask'):
         signal.pthread_sigmask(signal.SIG_UNBLOCK, handled_signals)
     for s in handled_signals:
@@ -308,6 +335,7 @@ def local_docs() -> str:
 @run_once
 def wrapped_kitten_names() -> frozenset[str]:
     import kitty.fast_data_types as f
+
     return frozenset(f.wrapped_kitten_names())
 
 

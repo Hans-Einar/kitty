@@ -2,11 +2,10 @@
 # License: GPL v3 Copyright: 2018, Kovid Goyal <kovid at kovidgoyal.net>
 
 
-from . import BaseTest
+from .base import BaseTest
 
 
 class TestTUI(BaseTest):
-
     def test_event_loop_initialization(self):
         import asyncio
         from unittest.mock import patch
@@ -39,6 +38,7 @@ class TestTUI(BaseTest):
 
     def test_line_edit(self):
         from kittens.tui.line_edit import LineEdit
+
         le = LineEdit()
         le.on_text('abcd', False)
         self.ae(le.cursor_pos, 4)
@@ -74,4 +74,5 @@ class TestTUI(BaseTest):
 
     def test_multiprocessing_spawn(self):
         from kitty.multiprocessing import test_spawn
+
         test_spawn()

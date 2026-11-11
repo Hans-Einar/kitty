@@ -8,16 +8,19 @@ import sys
 
 def icat(args: list[str]) -> None:
     from kitty.constants import kitten_exe
-    os.execl(kitten_exe(), "kitten", *args)
+
+    os.execl(kitten_exe(), 'kitten', *args)
 
 
 def resume(args: list[str]) -> None:
     from kitty.resume import main
+
     main(args[1:])
 
 
 def list_fonts(args: list[str]) -> None:
     from kitty.fonts.list import main as list_main
+
     list_main(args)
 
 
@@ -30,6 +33,7 @@ def runpy(args: list[str]) -> None:
 
 def hold(args: list[str]) -> None:
     from kitty.constants import kitten_exe
+
     args = ['kitten', '__hold_till_enter__'] + args[1:]
     os.execvp(kitten_exe(), args)
 
@@ -40,9 +44,10 @@ def complete(args: list[str]) -> None:
         raise SystemExit(1)
     if args[1] == 'fish2':
         args[1:1] = ['fish', '_legacy_completion=fish2']
-    elif len(args) >= 3 and args [1:3] == ['setup', 'fish2']:
+    elif len(args) >= 3 and args[1:3] == ['setup', 'fish2']:
         args[2] = 'fish'
     from kitty.constants import kitten_exe
+
     args = ['kitten', '__complete__'] + args[1:]
     os.execvp(kitten_exe(), args)
 
@@ -51,11 +56,13 @@ def open_urls(args: list[str]) -> None:
     setattr(sys, 'cmdline_args_for_open', True)
     sys.argv = ['kitty'] + args[1:]
     from kitty.main import main as kitty_main
+
     kitty_main()
 
 
 def launch(args: list[str]) -> None:
     import runpy
+
     sys.argv = args[1:]
     try:
         exe = args[1]
@@ -68,6 +75,7 @@ def launch(args: list[str]) -> None:
         )
     if exe.startswith(':'):
         import shutil
+
         q = shutil.which(exe[1:])
         if not q:
             raise SystemExit(f'{exe[1:]} not found in PATH')
@@ -79,6 +87,7 @@ def launch(args: list[str]) -> None:
 
 def shebang(args: list[str]) -> None:
     from kitty.constants import kitten_exe
+
     os.execvp(kitten_exe(), ['kitten', '__shebang__', 'confirm-if-needed'] + args[1:])
 
 
@@ -87,10 +96,12 @@ def run_kitten(args: list[str]) -> None:
         kitten = args[1]
     except IndexError:
         from kittens.runner import list_kittens
+
         list_kittens()
         raise SystemExit(1)
     sys.argv = args[1:]
     from kittens.runner import run_kitten as rk
+
     rk(kitten)
 
 
@@ -111,9 +122,7 @@ entry_points = {
     # These two are here for backwards compat
     'icat': icat,
     'list-fonts': list_fonts,
-
     'resume': resume,
-
     '+': namespaced,
 }
 namespaced_entry_points = {k: v for k, v in entry_points.items() if k[0] not in '+@'}
@@ -149,6 +158,7 @@ def main() -> None:
             namespaced(['+', first_arg[1:]] + sys.argv[2:])
         else:
             from kitty.main import main as kitty_main
+
             kitty_main()
     else:
         func(sys.argv[1:])

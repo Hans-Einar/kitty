@@ -67,6 +67,12 @@ func TestHintMarking(t *testing.T) {
 	r(`<a href="`+u+`">moo`, u)
 	r("\x1b[mhttp://test.me/1234\n\x1b[mx", "http://test.me/1234")
 	r("\x1b[mhttp://test.me/12345\r\x1b[m6\n\x1b[mx", "http://test.me/123456")
+	r("http://example.com,", "http://example.com")
+	r("http://example.com.", "http://example.com")
+	r("http://example.com!", "http://example.com")
+	r("http://example.com?", "http://example.com")
+	r("“"+u+"”", u)
+	r("‘"+u+"’", u)
 
 	opts.Type = "linenum"
 	m := func(text, path string, line int) {
@@ -94,6 +100,27 @@ func TestHintMarking(t *testing.T) {
 	r("file.epub.", "file.epub")
 	r("(file.epub)", "file.epub")
 	r("some/path", "some/path")
+	r("“some/path”", "some/path")
+	r("Saving to: ‘index.html’", "index.html")
+	// a match consisting of only a quote must not result in start > end
+	for _, text := range []string{`"`, `'`, `""`, "“”", "“"} {
+		for _, name := range []string{"quotes", "brackets"} {
+			if s, e := PostProcessorMap()[name](text, 0, len(text)); s > e {
+				t.Fatalf("%s post processor returned start (%d) > end (%d) for %#v", name, s, e, text)
+			}
+		}
+	}
+	// long lines without spaces must not cause quadratic backtracking
+	long_line := strings.Repeat("1,", 20000)
+	r(long_line)
+	r("漢字 "+long_line+" some/path", "some/path")
+	r("漢字"+long_line+"a.txt", "漢字"+long_line+"a.txt")
+	// \b must use Unicode word characters, like regexp2
+	r("config.yaml文件")
+	r("a.txt文 é/b.c", "a.txt文", "é/b.c")
+	opts.Type = "linenum"
+	r(long_line)
+	m(long_line+" a/file.c:23", "a/file.c", 23)
 
 	reset()
 	cols = 60
@@ -104,6 +131,7 @@ func TestHintMarking(t *testing.T) {
 	r(`2001:db8::ff00:42:8329`, `2001:db8::ff00:42:8329`)
 	r(`2001:DB8::FF00:42:8329`, `2001:DB8::FF00:42:8329`)
 	r(`0000:0000:0000:0000:0000:0000:0000:0001`, `0000:0000:0000:0000:0000:0000:0000:0001`)
+	r(`2600:1901:0:b2bd::`, `2600:1901:0:b2bd::`) // ifconfig.me
 	r(`::1`, `::1`)
 	r(`255.255.255.256`)
 	r(`:1`)

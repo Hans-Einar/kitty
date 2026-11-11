@@ -3,15 +3,17 @@
 package at
 
 import (
-	"encoding/base64"
 	"errors"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/emmansun/base64"
+
 	"github.com/kovidgoyal/kitty/tools/tty"
 	"github.com/kovidgoyal/kitty/tools/tui/loop"
 	"github.com/kovidgoyal/kitty/tools/utils"
 	"github.com/kovidgoyal/kitty/tools/utils/shlex"
-	"io"
-	"os"
-	"strings"
 )
 
 var end_reading_from_stdin = errors.New("end reading from STDIN")
@@ -39,10 +41,7 @@ func parse_send_text(io_data *rc_io_data, args []string) error {
 		}
 		text := strings.Join(args, " ")
 		text_gen := func(io_data *rc_io_data) (bool, error) {
-			limit := len(text)
-			if limit > 2048 {
-				limit = 2048
-			}
+			limit := min(len(text), 2048)
 			set_payload_data(io_data, "base64:"+base64.StdEncoding.EncodeToString(utils.UnsafeStringToBytes(text[:limit])))
 			text = text[limit:]
 			return len(text) == 0, nil

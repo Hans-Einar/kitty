@@ -1,29 +1,34 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2024, Kovid Goyal <kovid at kovidgoyal.net>
 
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, Union
+import copy
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Union, cast
 
 from kitty.constants import is_macos
 from kitty.fast_data_types import ParsedFontFeature
-from kitty.fonts import Descriptor, DescriptorVar, DesignAxis, FontSpec, NamedStyle, Scorer, VariableAxis, VariableData, family_name_to_key
+from kitty.fonts import Descriptor, DesignAxis, FontSpec, NamedStyle, Scorer, VariableAxis, VariableData, family_name_to_key
 from kitty.options.types import Options
 
 if TYPE_CHECKING:
-    from kitty.fast_data_types import CTFace
+    from kitty.fast_data_types import CoreTextFont, CTFace, FontConfigPattern
     from kitty.fast_data_types import Face as FT_Face
 
     FontCollectionMapType = Literal['family_map', 'ps_map', 'full_map', 'variable_map']
     FontMap = dict[FontCollectionMapType, dict[str, list[Descriptor]]]
     Face = Union[FT_Face, CTFace]
+
     def all_fonts_map(monospaced: bool) -> FontMap: ...
     def create_scorer(bold: bool = False, italic: bool = False, monospaced: bool = True, prefer_variable: bool = False) -> Scorer: ...
     def find_best_match(
-        family: str, bold: bool = False, italic: bool = False, monospaced: bool = True, ignore_face: Descriptor | None = None,
+        family: str,
+        bold: bool = False,
+        italic: bool = False,
+        monospaced: bool = True,
+        ignore_face: Descriptor | None = None,
         prefer_variable: bool = False,
-        ) -> Descriptor: ...
+    ) -> Descriptor: ...
     def find_last_resort_text_font(bold: bool = False, italic: bool = False, monospaced: bool = True) -> Descriptor: ...
-    def face_from_descriptor(descriptor: Descriptor, font_sz_in_pts: float | None = None, dpi_x: float | None = None, dpi_y: float | None = None
-                             ) -> Face: ...
+    def face_from_descriptor(descriptor: Descriptor, font_sz_in_pts: float | None = None, dpi_x: float | None = None, dpi_y: float | None = None) -> Face: ...
     def is_monospace(descriptor: Descriptor) -> bool: ...
     def is_variable(descriptor: Descriptor) -> bool: ...
     def set_named_style(name: str, font: Descriptor, vd: VariableData) -> bool: ...
@@ -32,6 +37,7 @@ if TYPE_CHECKING:
 else:
     FontCollectionMapType = FontMap = None
     from kitty.fast_data_types import specialize_font_descriptor
+
     if is_macos:
         from kitty.fast_data_types import CTFace as Face
         from kitty.fonts.core_text import (
@@ -58,13 +64,21 @@ else:
             set_axis_values,
             set_named_style,
         )
-    def face_from_descriptor(descriptor, font_sz_in_pts = None, dpi_x = None, dpi_y = None):
+
+    def face_from_descriptor(descriptor: Descriptor, font_sz_in_pts: float | None = None, dpi_x: float | None = None, dpi_y: float | None = None) -> Face:
         if font_sz_in_pts is not None:
             descriptor = specialize_font_descriptor(descriptor, font_sz_in_pts, dpi_x, dpi_y)
         return Face(descriptor=descriptor)
 
 
 cache_for_variable_data_by_path: dict[str, VariableData] = {}
+
+
+def clear_caches() -> None:
+    cache_for_variable_data_by_path.clear()
+    actually_variable_cache.clear()
+
+
 attr_map = {(False, False): 'font_family', (True, False): 'bold_font', (False, True): 'italic_font', (True, True): 'bold_italic_font'}
 
 
@@ -132,9 +146,7 @@ def get_variable_data_for_face(d: Face) -> VariableData:
     return ans
 
 
-def find_best_match_in_candidates(
-    candidates: list[DescriptorVar], scorer: Scorer, is_medium_face: bool, ignore_face: DescriptorVar | None = None
-) -> DescriptorVar | None:
+def find_best_match_in_candidates[T](candidates: list[T], scorer: Scorer[T], is_medium_face: bool, ignore_face: T | None = None) -> T | None:
     if candidates:
         for x in scorer.sorted_candidates(candidates):
             if ignore_face is None or x != ignore_face:
@@ -144,11 +156,12 @@ def find_best_match_in_candidates(
 
 def pprint(*a: Any, **kw: Any) -> None:
     from pprint import pprint
+
     pprint(*a, **kw)
 
 
-def find_medium_variant(font: DescriptorVar) -> DescriptorVar:
-    font = font.copy()
+def find_medium_variant[T: (CoreTextFont | FontConfigPattern)](font: T) -> T:
+    font = copy.copy(font)
     vd = get_variable_data_for_descriptor(font)
     for i, ns in enumerate(vd['named_styles']):
         if ns['name'] == 'Regular':
@@ -253,8 +266,13 @@ def find_best_variable_face(spec: FontSpec, bold: bool, italic: bool, monospaced
 
 
 def get_fine_grained_font(
-    spec: FontSpec, bold: bool = False, italic: bool = False, family_axis_values: FamilyAxisValues = FamilyAxisValues(),
-    resolved_medium_font: Descriptor | None = None, monospaced: bool = True, match_is_more_specific_than_family: Event = Event()
+    spec: FontSpec,
+    bold: bool = False,
+    italic: bool = False,
+    family_axis_values: FamilyAxisValues = FamilyAxisValues(),
+    resolved_medium_font: Descriptor | None = None,
+    monospaced: bool = True,
+    match_is_more_specific_than_family: Event = Event(),
 ) -> Descriptor:
     font_map = all_fonts_map(monospaced)
     is_medium_face = resolved_medium_font is None
@@ -317,12 +335,22 @@ def apply_variation_to_pattern(pat: Descriptor, spec: FontSpec) -> tuple[Descrip
 
 
 def get_font_from_spec(
-    spec: FontSpec, bold: bool = False, italic: bool = False, family_axis_values: FamilyAxisValues = FamilyAxisValues(),
-    resolved_medium_font: Descriptor | None = None, match_is_more_specific_than_family: Event = Event()
+    spec: FontSpec,
+    bold: bool = False,
+    italic: bool = False,
+    family_axis_values: FamilyAxisValues = FamilyAxisValues(),
+    resolved_medium_font: Descriptor | None = None,
+    match_is_more_specific_than_family: Event = Event(),
 ) -> Descriptor:
     if not spec.is_system:
-        ans = get_fine_grained_font(spec, bold, italic, resolved_medium_font=resolved_medium_font, family_axis_values=family_axis_values,
-                                     match_is_more_specific_than_family=match_is_more_specific_than_family)
+        ans = get_fine_grained_font(
+            spec,
+            bold,
+            italic,
+            resolved_medium_font=resolved_medium_font,
+            family_axis_values=family_axis_values,
+            match_is_more_specific_than_family=match_is_more_specific_than_family,
+        )
         if spec.features:
             ans = ans.copy()
             ans['features'] = spec.features
@@ -394,7 +422,40 @@ def get_font_files(opts: Options) -> FontFiles:
             font = medium_font
         key = kd[(bold, italic)]
         ans[key] = font
-    return {'medium': ans['medium'], 'bold': ans['bold'], 'italic': ans['italic'], 'bi': ans['bi']}
+
+    def apply_synthetic_matrix(font: Descriptor, bold: bool, italic: bool) -> Descriptor:
+        # fontconfig's FcFontList (used by find_best_match) omits FC_MATRIX from
+        # its object set, so a roman font found there carries no synthetic-italic
+        # shear and its "italic" renders upright. Fira Code is the case (it ships
+        # no italic), in both its static and variable builds. The italic intent
+        # exists only here at selection finalize, not at face construction, so
+        # recover the matrix now: for an italic slot whose chosen face is upright
+        # (no slant) and has no matrix yet, ask fc_match what fontconfig would do.
+        # fc_match returns a synthetic matrix only when there is no real italic to
+        # use (no italic face and no slanted named instance or variable slant
+        # axis); when a real italic exists it returns no matrix, so a font that is
+        # already italic, static or variable, is never double-slanted. Face construction applies the matrix
+        # via FT_Set_Transform; specialize_font_descriptor preserves it when the
+        # descriptor is sized for rendering. Only the matrix is taken, so
+        # selection is unchanged. Covers the four configured faces; fc_match
+        # re-matches by family name (see commit message).
+        if italic and font['descriptor_type'] == 'fontconfig' and not font.get('matrix') and not font.get('slant'):
+            from kitty.fast_data_types import FC_MONO
+            from kitty.fonts.fontconfig import fc_match
+
+            mtx = fc_match(font['family'], bold, italic, FC_MONO if is_monospace(font) else -1).get('matrix')
+            if mtx:
+                new_font = font.copy()
+                new_font['matrix'] = mtx
+                return new_font
+        return font
+
+    return {
+        'medium': ans['medium'],
+        'bold': ans['bold'],
+        'italic': apply_synthetic_matrix(ans['italic'], False, True),
+        'bi': apply_synthetic_matrix(ans['bi'], True, True),
+    }
 
 
 def axis_values_are_equal(defaults: dict[str, float], a: dict[str, float], b: dict[str, float]) -> bool:
@@ -414,7 +475,7 @@ def _get_named_style(axis_map: dict[str, float], vd: VariableData) -> NamedStyle
 
 def get_named_style(face_or_descriptor: Face | Descriptor) -> NamedStyle | None:
     if isinstance(face_or_descriptor, dict):
-        d: Descriptor = face_or_descriptor
+        d = cast(Descriptor, face_or_descriptor)
         vd = get_variable_data_for_descriptor(d)
         if d['descriptor_type'] == 'fontconfig':
             ns = d.get('named_style', -1)
@@ -428,7 +489,7 @@ def get_named_style(face_or_descriptor: Face | Descriptor) -> NamedStyle | None:
         else:
             axis_map = d.get('axis_map', {}).copy()
     else:
-        face: Face = face_or_descriptor
+        face = cast(Face, face_or_descriptor)
         vd = get_variable_data_for_face(face)
         q = face.get_variation()
         if q is None:
@@ -441,7 +502,7 @@ def get_axis_map(face_or_descriptor: Face | Descriptor) -> dict[str, float]:
     base_axis_map = {}
     axis_map: dict[str, float] = {}
     if isinstance(face_or_descriptor, dict):
-        d: Descriptor = face_or_descriptor
+        d = cast(Descriptor, face_or_descriptor)
         vd = get_variable_data_for_descriptor(d)
         if d['descriptor_type'] == 'fontconfig':
             ns = d.get('named_style', -1)
@@ -456,7 +517,7 @@ def get_axis_map(face_or_descriptor: Face | Descriptor) -> dict[str, float]:
         else:
             axis_map = d.get('axis_map', {}).copy()
     else:
-        face: Face = face_or_descriptor
+        face = cast(Face, face_or_descriptor)
         q = face.get_variation()
         if q is not None:
             axis_map = q
@@ -482,11 +543,14 @@ def spec_for_face(family: str, face: Face) -> FontSpec:
 
 def develop(family: str = '') -> None:
     import sys
+
     family = family or sys.argv[-1]
     from kitty.options.utils import parse_font_spec
+
     opts = Options()
     opts.font_family = parse_font_spec(family)
     ff = get_font_files(opts)
+
     def s(name: str, d: Descriptor) -> None:
         f = face_from_descriptor(d)
         print(name, str(f))

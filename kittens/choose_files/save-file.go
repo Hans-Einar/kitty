@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kovidgoyal/go-parallel"
 	"github.com/kovidgoyal/kitty/tools/cli"
 	"github.com/kovidgoyal/kitty/tools/tui/loop"
 	"github.com/kovidgoyal/kitty/tools/utils"
@@ -26,8 +27,7 @@ func FilePromptCompleter(getcwd func() string) func(string, string) *cli.Complet
 	return func(before_cursor, after_cursor string) (ans *cli.Completions) {
 		defer func() {
 			if r := recover(); r != nil {
-				text, err := utils.Format_stacktrace_on_panic(r)
-				debugprintln(text)
+				err := parallel.Format_stacktrace_on_panic(r, 1)
 				debugprintln(err)
 			}
 		}()
@@ -68,7 +68,7 @@ func FilePromptCompleter(getcwd func() string) func(string, string) *cli.Complet
 		for _, e := range entries {
 			word := e.Name()
 			if leading == "" || strings.HasPrefix(word, leading) {
-				collection := utils.IfElse(e.Type().IsDir(), dirs, files)
+				collection := utils.IfElse(is_directory(resolve_symlink_to_dir(filepath.Join(dir, e.Name()), e.Type())), dirs, files)
 				if prefix != "" {
 					word = prefix + word
 				}

@@ -33,7 +33,7 @@ func BenchmarkIndexByte(b *testing.B) {
 			f = bytes.IndexByte
 		}
 		b.Run(fmt.Sprintf("%s_sz=%d", which, pos), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				f(data, 'q')
 			}
 		})
@@ -54,8 +54,50 @@ func BenchmarkIndexByte2(b *testing.B) {
 			f = index_byte2_scalar
 		}
 		b.Run(fmt.Sprintf("%s_sz=%d", which, pos), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				f(data, 'q', 'x')
+			}
+		})
+	}
+	for _, pos := range sizes {
+		t(pos, "simdstring")
+		t(pos, "scalar")
+	}
+}
+
+func BenchmarkNotIndexByte(b *testing.B) {
+	t := func(pos int, which string) {
+		// Fill with 'a' and place 'q' (a non-matching byte) at the target position
+		data := haystack('a', 'q', pos)
+		f := NotIndexByte
+		switch which {
+		case "scalar":
+			f = not_index_byte_scalar
+		}
+		b.Run(fmt.Sprintf("%s_sz=%d", which, pos), func(b *testing.B) {
+			for b.Loop() {
+				f(data, 'a')
+			}
+		})
+	}
+	for _, pos := range sizes {
+		t(pos, "simdstring")
+		t(pos, "scalar")
+	}
+}
+
+func BenchmarkNotIndexByte2(b *testing.B) {
+	t := func(pos int, which string) {
+		// Fill with 'a' and place 'q' (neither 'a' nor 'x') at the target position
+		data := haystack('a', 'q', pos)
+		f := NotIndexByte2
+		switch which {
+		case "scalar":
+			f = not_index_byte2_scalar
+		}
+		b.Run(fmt.Sprintf("%s_sz=%d", which, pos), func(b *testing.B) {
+			for b.Loop() {
+				f(data, 'a', 'x')
 			}
 		})
 	}

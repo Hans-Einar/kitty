@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-import ctypes
 import os
 import sys
 from collections.abc import Callable, Generator
@@ -26,7 +25,6 @@ from kitty.fast_data_types import (
 )
 from kitty.options.types import Options, defaults
 from kitty.options.utils import parse_font_spec
-from kitty.types import _T
 from kitty.typing_compat import CoreTextFont, FontConfigPattern
 from kitty.utils import log_error
 
@@ -54,7 +52,7 @@ def font_for_family(family: str) -> tuple[FontObject, bool, bool]:
     return font_for_family_fontconfig(family)
 
 
-def merge_ranges(
+def merge_ranges[_T](
     a: tuple[tuple[int, int], _T], b: tuple[tuple[int, int], _T], priority_map: dict[tuple[int, int], int]
 ) -> Generator[tuple[tuple[int, int], _T], None, None]:
     a_start, a_end = a[0]
@@ -120,7 +118,7 @@ def merge_ranges(
     yield from ranges
 
 
-def coalesce_symbol_maps(maps: dict[tuple[int, int], _T]) -> dict[tuple[int, int], _T]:
+def coalesce_symbol_maps[_T](maps: dict[tuple[int, int], _T]) -> dict[tuple[int, int], _T]:
     if not maps:
         return maps
     priority_map = {r: i for i, r in enumerate(maps.keys())}
@@ -180,12 +178,23 @@ def dump_font_debug() -> None:
     cf = current_fonts()
     log_error('Text fonts:')
     for key, text in {'medium': 'Normal', 'bold': 'Bold', 'italic': 'Italic', 'bi': 'Bold-Italic'}.items():
-        log_error(f'  {text}:', cf[key].identify_for_debug())  # type: ignore
+        log_error(f'  {text}:', cf[key].identify_for_debug())
     ss = cf['symbol']
     if ss:
         log_error('Symbol map fonts:')
         for s in ss:
             log_error('  ' + s.identify_for_debug())
+
+
+def clear_font_caches() -> None:
+    from .common import clear_caches as clear_common_caches
+
+    clear_common_caches()
+    if is_macos:
+        from .core_text import clear_caches as clear_platform_caches
+    else:
+        from .fontconfig import clear_caches as clear_platform_caches
+    clear_platform_caches()
 
 
 def set_font_family(opts: Options | None = None, override_font_size: float | None = None, add_builtin_nerd_font: bool = False) -> None:
@@ -210,14 +219,12 @@ def set_font_family(opts: Options | None = None, override_font_size: float | Non
     sm = create_symbol_map(opts)
     ns = create_narrow_symbols(opts)
     num_symbol_fonts = len(current_faces) - before
-    set_font_data(
-        descriptor_for_idx,
-        indices['bold'], indices['italic'], indices['bi'], num_symbol_fonts,
-        sm, sz, ns
-    )
+    set_font_data(descriptor_for_idx, indices['bold'], indices['italic'], indices['bi'], num_symbol_fonts, sm, sz, ns)
 
 
 if TYPE_CHECKING:
+    import ctypes
+
     CBufType = ctypes.Array[ctypes.c_ubyte]
 else:
     CBufType = None
@@ -225,7 +232,6 @@ UnderlineCallback = Callable[[CBufType, int, int, int, int], None]
 
 
 class setup_for_testing:
-
     xnum = 100000
     ynum = 100
     baseline = 0
@@ -265,7 +271,7 @@ class setup_for_testing:
 
 def render_string(text: str, family: str = 'monospace', size: float = 11.0, dpi: float = 96.0) -> tuple[int, int, list[bytes]]:
     with setup_for_testing(family, size, dpi) as (sprites, cell_width, cell_height):
-        s = Screen(None, 1, len(text)*2)
+        s = Screen(None, 1, len(text) * 2)
         line = s.line(0)
         s.draw(text)
         test_render_line(line)
@@ -273,7 +279,7 @@ def render_string(text: str, family: str = 'monospace', size: float = 11.0, dpi:
     found_content = False
     for i in reversed(range(s.columns)):
         sp = line.sprite_at(i)
-        sp &= 0x7fffffff
+        sp &= 0x7FFFFFFF
         if not sp and not found_content:
             continue
         found_content = True
@@ -282,10 +288,10 @@ def render_string(text: str, family: str = 'monospace', size: float = 11.0, dpi:
 
 
 def shape_string(
-    text: str = "abcd", family: str = 'monospace', size: float = 11.0, dpi: float = 96.0, path: str | None = None
+    text: str = 'abcd', family: str = 'monospace', size: float = 11.0, dpi: float = 96.0, path: str | None = None
 ) -> list[tuple[int, int, int, tuple[int, ...]]]:
     with setup_for_testing(family, size, dpi) as (sprites, cell_width, cell_height):
-        s = Screen(None, 1, len(text)*2)
+        s = Screen(None, 1, len(text) * 2)
         line = s.line(0)
         s.draw(text)
         return test_shape(line, path)
@@ -317,12 +323,7 @@ def display_bitmap(rgb_data: bytes, width: int, height: int) -> None:
     show(rgb_data, width, height)
 
 
-def test_render_string(
-        text: str = 'Hello, world!',
-        family: str = 'monospace',
-        size: float = 64.0,
-        dpi: float = 96.0
-) -> None:
+def test_render_string(text: str = 'Hello, world!', family: str = 'monospace', size: float = 64.0, dpi: float = 96.0) -> None:
 
     cell_width, cell_height, cells = render_string(text, family, size, dpi)
     rgb_data = concat_cells(cell_width, cell_height, True, tuple(cells))
@@ -343,7 +344,7 @@ def test_fallback_font(qtext: str | None = None, bold: bool = False, italic: boo
         if qtext:
             trials = [qtext]
         else:
-            trials = ['你', 'He\u0347\u0305', '\U0001F929']
+            trials = ['你', 'He\u0347\u0305', '\U0001f929']
         for text in trials:
             f = get_fallback_font(text, bold, italic)
             try:
@@ -363,8 +364,10 @@ def showcase() -> None:
 def create_face(path: str) -> 'Union[CTFace, Face]':
     if is_macos:
         from kitty.fast_data_types import CTFace
+
         return CTFace(path=path)
     from kitty.fast_data_types import Face
+
     return Face(path=path)
 
 

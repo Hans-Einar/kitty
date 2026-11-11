@@ -43,11 +43,12 @@ class ButtonEvent(NamedTuple):
 
 def is_click(a: ButtonEvent, b: ButtonEvent) -> bool:
     from .loop import EventType
+
     if a.mouse_event.type is not EventType.PRESS or b.mouse_event.type is not EventType.RELEASE:
         return False
     x = a.mouse_event.cell_x - b.mouse_event.cell_x
     y = a.mouse_event.cell_y - b.mouse_event.cell_y
-    return x*x + y*y <= 4
+    return x * x + y * y <= 4
 
 
 class KittenUI:
@@ -76,6 +77,7 @@ class KittenUI:
             os.set_inheritable(self.rc_fd, False)
         if (self.remote_control_password or self.remote_control_password == '') and not self.password:
             import socket
+
             with socket.fromfd(self.rc_fd, socket.AF_UNIX, socket.SOCK_STREAM) as s:
                 data = s.recv(256)
             if not data.endswith(b'\n'):
@@ -102,7 +104,7 @@ class KittenUI:
             raise ValueError('Remote control is not enabled, remember to use allow_remote_control=True')
         prefix = [kitten_exe(), '@']
         r = -1
-        pass_fds = list(kw.get('pass_fds') or ())
+        pass_fds = list(kw.get('pass_fds') or [])
         try:
             if self.rc_fd > -1:
                 pass_fds.append(self.rc_fd)
@@ -119,6 +121,7 @@ class KittenUI:
             else:
                 cmd = prefix + list(cmd)
             import subprocess
+
             if self.rc_fd > -1:
                 is_inheritable = os.get_inheritable(self.rc_fd)
                 if not is_inheritable:
@@ -145,7 +148,6 @@ def kitten_ui(
 
 
 class Handler:
-
     image_manager_class: type[ImageManagerType] | None = None
     use_alternate_screen = True
     mouse_tracking = MouseTracking.none
@@ -159,9 +161,10 @@ class Handler:
         schedule_write: Callable[[bytes], None],
         tui_loop: LoopType,
         debug: Debug,
-        image_manager: ImageManagerType | None = None
+        image_manager: ImageManagerType | None = None,
     ) -> None:
         from .operations import commander
+
         self.screen_size = screen_size
         self._term_manager = term_manager
         self._tui_loop = tui_loop
@@ -185,6 +188,7 @@ class Handler:
             self._key_shortcuts: dict[ParsedShortcut, KeyActionType] = {}
         if isinstance(spec, str):
             from kitty.key_encoding import parse_shortcut
+
             spec = parse_shortcut(spec)
         self._key_shortcuts[spec] = action
 
@@ -200,12 +204,13 @@ class Handler:
         self.debug.fobj = self
         self.initialize()
 
-    def __exit__(self, etype: type, value: Exception, tb: TracebackType) -> None:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, tb: TracebackType | None) -> bool | None:
         del self.debug.fobj
         with suppress(Exception):
             self.finalize()
             if self._image_manager is not None:
-                self._image_manager.__exit__(etype, value, tb)
+                self._image_manager.__exit__(exc_type, exc_val, tb)
+        return None
 
     def initialize(self) -> None:
         pass
@@ -213,8 +218,8 @@ class Handler:
     def finalize(self) -> None:
         pass
 
-    def on_resize(self, screen_size: ScreenSize) -> None:
-        self.screen_size = screen_size
+    def on_resize(self, new_size: ScreenSize) -> None:
+        self.screen_size = new_size
 
     def quit_loop(self, return_code: int | None = None) -> None:
         self._tui_loop.quit(return_code)
@@ -227,14 +232,14 @@ class Handler:
         self._tui_loop.quit(1)
 
     def on_key_event(self, key_event: KeyEventType, in_bracketed_paste: bool = False) -> None:
-        ' Override this method and perform_default_key_action() to handle all key events '
+        "Override this method and perform_default_key_action() to handle all key events"
         if key_event.text:
             self.on_text(key_event.text, in_bracketed_paste)
         else:
             self.on_key(key_event)
 
     def perform_default_key_action(self, key_event: KeyEventType) -> bool:
-        ' Override in sub-class if you want to handle these key events yourself '
+        "Override in sub-class if you want to handle these key events yourself"
         if key_event.matches('ctrl+c'):
             self.on_interrupt()
             return True
@@ -251,6 +256,7 @@ class Handler:
 
     def on_mouse_event(self, mouse_event: MouseEvent) -> None:
         from .loop import EventType
+
         if mouse_event.type is EventType.MOVE:
             self.on_mouse_move(mouse_event)
         elif mouse_event.type is EventType.PRESS:
@@ -316,11 +322,11 @@ class Handler:
         def f(*a: Any, **kw: Any) -> Any:
             with pending_update(a[0].write):
                 return func(*a, **kw)
+
         return cast(DecoratedFunc, f)
 
 
 class HandleResult:
-
     type_of_input: str | None = None
     no_ui: bool = False
 
@@ -333,7 +339,6 @@ class HandleResult:
 
     def __call__(self, args: Sequence[str], data: Any, target_window_id: int, boss: BossType) -> Any:
         return self.impl(args, data, target_window_id, boss)
-
 
 
 def result_handler(

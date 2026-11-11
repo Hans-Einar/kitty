@@ -45,7 +45,7 @@ func TestPathMappingSend(t *testing.T) {
 			actual[f.expanded_local_path] = f.remote_path
 		}
 		e := make(map[string]string, len(actual))
-		for _, rec := range strings.Split(expected, " ") {
+		for rec := range strings.SplitSeq(expected, " ") {
 			k, v, _ := strings.Cut(rec, ":")
 			e[mp(k, false)] = mp(v, true)
 		}
@@ -99,4 +99,32 @@ func TestPathMappingSend(t *testing.T) {
 		ae(f.hard_link_target, "fid:1")
 		ae(f.file_type, FileType_link)
 	})
+}
+
+func TestSendFailureHints(t *testing.T) {
+	opts := &Options{}
+	home := filepath.ToSlash(home_path())
+	eisdir := func(remote_path string) *File {
+		return &File{remote_path: remote_path, err_msg: "EISDIR:Cannot replace the existing directory x with a file"}
+	}
+	th := func(args []string, failed []*File, expected ...string) {
+		t.Helper()
+		actual := failure_hints(opts, args, failed)
+		if len(actual) != len(expected) {
+			t.Fatalf("Unexpected hints for %#v: %#v", args, actual)
+		}
+		for i, e := range expected {
+			if !strings.Contains(actual[i], e) {
+				t.Fatalf("Hint %#v does not contain %#v", actual[i], e)
+			}
+		}
+	}
+	th([]string{"a", "/x/d"}, nil)
+	th([]string{"a", "/x/d"}, []*File{eisdir("/x/d")}, "trailing slash, for example: /x/d/")
+	th([]string{"a", "/x/d/"}, []*File{eisdir("/x/d/a")})
+	th([]string{"a", "b", "/x/d"}, []*File{eisdir("/x/d/a")})
+	th([]string{"a", home + "/Downloads"}, []*File{{remote_path: home + "/Downloads", err_msg: "ENOTSUP:x"}}, `\~/Downloads`)
+	th([]string{"a", home + "/Downloads"}, []*File{eisdir(home + "/Downloads")}, "trailing slash", `\~/Downloads`)
+	opts.Mode = "mirror"
+	th([]string{"a", "/x/d"}, []*File{eisdir("/x/d")})
 }

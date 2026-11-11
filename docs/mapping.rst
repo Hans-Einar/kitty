@@ -58,7 +58,7 @@ executable. In the script file you run remote control commands by running the
    #!/bin/sh
 
    kitten @ set-spacing margin=30
-   kitten @ new_window
+   kitten @ launch
    ...
 
 The script can perform arbitrarily complex logic and actions, limited only by
@@ -110,9 +110,10 @@ for a list of key names. The name to use is the part after the :code:`XKB_KEY_`
 prefix. Note that you can only use an XKB key name for keys that are not known
 as kitty keys.
 
-Finally, you can use raw system key codes to map keys, again only for keys that
-are not known as kitty keys. To see the system key code for a key, start kitty
-with the :option:`kitty --debug-input` option, kitty will output some debug text
+Finally, you can use raw system key codes to map keys. These mappings are tried
+only when no ordinary key mapping or its allowed fallbacks match the event.
+System key codes depend on the platform. To see the system key code for a key,
+start kitty with the :option:`kitty --debug-input` option, kitty will output some debug text
 for every key event. In that text look for :code:`native_code`, the value
 of that becomes the key name in the shortcut. For example:
 
@@ -167,6 +168,33 @@ the program running in the terminal, map it to :ac:`discard_event`::
 
 .. _conditional_mappings:
 
+Configuring a timeout
+----------------------
+
+You can also set a timeout for keyboard modes and multi-key mappings. If a
+timeout is set and you don't complete the key sequence or exit the mode within
+the specified time, the mode will be automatically cancelled. This is useful
+for multi-key mappings where you might accidentally press the first key and
+then change your mind. The timeout is specified in seconds and can be set
+globally using the :opt:`map_timeout` option or per-mode using ``--timeout``::
+
+    # Set a global 2 second timeout for all multi-key and modal mappings
+    map_timeout 2.0
+
+    # This mode will have a 5 second timeout (overrides global setting)
+    map --new-mode resize --timeout 5.0 kitty_mod+r
+    map --mode resize h resize_window narrower
+    map --mode resize l resize_window wider
+    # ... more mappings
+
+    # Multi-key mapping with the global timeout
+    map ctrl+a>h new_window
+
+When a timeout occurs, the mode is exited and any buffered keys are discarded.
+A timeout value of zero disables the timeout. For multi-key sequences, the
+timeout is restarted after each valid key press in the sequence.
+
+
 Conditional mappings depending on the state of the focused window
 ----------------------------------------------------------------------
 
@@ -194,41 +222,113 @@ running an editor::
 
     map --when-focus-on var:in_editor kitty_mod+c
 
-In order to make this work, you need to configure your editor as show below:
+In order to make this work, you need to configure your editor as shown below:
 
-.. tab:: vim
+.. tab-set::
 
-   In :file:`~/.vimrc` add:
-    .. code-block:: vim
+   .. tab-item:: vim
 
-        let &t_ti = &t_ti . "\033]1337;SetUserVar=in_editor=MQo\007"
-        let &t_te = &t_te . "\033]1337;SetUserVar=in_editor\007"
+      In :file:`~/.vimrc` add:
 
-.. tab:: neovim
+      .. code-block:: vim
 
-   In :file:`~/.config/nvim/init.lua` add:
+         let &t_ti = &t_ti . "\033]1337;SetUserVar=in_editor=MQ==\007"
+         let &t_te = &t_te . "\033]1337;SetUserVar=in_editor\007"
 
-    .. code-block:: lua
+   .. tab-item:: neovim
 
-        vim.api.nvim_create_autocmd({ "VimEnter", "VimResume" }, {
-            group = vim.api.nvim_create_augroup("KittySetVarVimEnter", { clear = true }),
-            callback = function()
-                io.stdout:write("\x1b]1337;SetUserVar=in_editor=MQo\007")
-            end,
-        })
+      In :file:`~/.config/nvim/init.lua` add:
 
-        vim.api.nvim_create_autocmd({ "VimLeave", "VimSuspend" }, {
-            group = vim.api.nvim_create_augroup("KittyUnsetVarVimLeave", { clear = true }),
-            callback = function()
-                io.stdout:write("\x1b]1337;SetUserVar=in_editor\007")
-            end,
-        })
+      .. code-block:: lua
+
+         vim.api.nvim_create_autocmd({ "VimEnter", "VimResume", "UIEnter" }, {
+             group = vim.api.nvim_create_augroup("KittySetVarVimEnter", { clear = true }),
+             callback = function()
+                 if vim.api.nvim_ui_send then
+                     vim.api.nvim_ui_send("\x1b]1337;SetUserVar=in_editor=MQ==\007")
+                 else
+                     io.stdout:write("\x1b]1337;SetUserVar=in_editor=MQ==\007")
+                 end
+             end,
+         })
+
+         vim.api.nvim_create_autocmd({ "VimLeave", "VimSuspend" }, {
+             group = vim.api.nvim_create_augroup("KittyUnsetVarVimLeave", { clear = true }),
+             callback = function()
+                 if vim.api.nvim_ui_send then
+                     vim.api.nvim_ui_send("\x1b]1337;SetUserVar=in_editor\007")
+                 else
+                     io.stdout:write("\x1b]1337;SetUserVar=in_editor\007")
+                 end
+             end,
+         })
 
 These cause the editor to set the :code:`in_editor` variable in kitty and unset it when exiting.
 As a result, the :kbd:`ctrl+shift+c` key will be passed to the editor instead of
 copying to clipboard. In the editor, you can map it to copy to the clipboard,
 thereby allowing use of a common shortcut both inside and outside the editor
 for copying to clipboard.
+
+.. note::
+
+   When using multi-key mappings, of the form :kbd:`k1>k2` or similar, the
+   condition applies to the first key and you can have only one condition per
+   key, the last in kitty.conf wins. In particular, this means you cannot have
+   multiple conditions applying to multi-key mappings with the same first key
+   and you cannot have mappings with and without conditions applying to multi-keys
+   with the same first key.
+
+
+.. _mapping-fallback:
+
+Non-Latin keyboard layout support
+--------------------------------------
+
+When using a non-Latin keyboard layout (e.g. Russian, Arabic, Greek), letter-key
+shortcuts like :kbd:`Ctrl+C` stop working because the key produces a non-Latin
+character. kitty solves this with the ``--allow-fallback`` option on the ``map``
+directive, which controls how shortcuts fall back to the physical key position.
+
+The ``--allow-fallback`` option accepts a comma-separated list of fallback types:
+
+``shifted``
+    Fall back to the *shifted key* — the character produced when Shift is held
+    with the key. This is the default for all mappings and preserves the existing
+    behavior.
+
+``ascii``
+    Fall back to the *alternate key* — the character that the physical key would
+    produce in a standard US layout. This only triggers when the key produces a
+    non-ASCII character, so it has no effect on Latin-based layouts like Dvorak
+    or Colemak.
+
+``none``
+    Disable all fallback matching. The mapping will only match the exact key
+    specified, ignoring both shifted and alternate key positions.
+
+For example::
+
+    # Enable both shifted and ASCII fallback (used by default kitty shortcuts)
+    map --allow-fallback=shifted,ascii kitty_mod+c copy_to_clipboard
+
+    # Only ASCII fallback, no shifted key fallback
+    map --allow-fallback=ascii ctrl+s save_something
+
+    # Disable all fallback (neither shifted nor alternate key matching)
+    map --allow-fallback=none ctrl+x some_action
+
+All default kitty shortcuts use ``--allow-fallback=shifted,ascii``, so they work
+out of the box with non-Latin layouts. Custom mappings without an explicit
+``--allow-fallback`` get the default value of ``shifted``, which preserves
+backward compatibility.
+
+.. note::
+
+   The ``ascii`` fallback uses a non-ASCII guard: it only activates when
+   the key produces a character with a Unicode code point above 127. This means
+   alternative Latin layouts (Dvorak, Colemak, etc.) are never affected by the
+   ``ascii`` fallback — only non-Latin layouts trigger it.
+
 
 Sending arbitrary text or keys to the program running in kitty
 --------------------------------------------------------------------------------
@@ -296,7 +396,7 @@ Now, if you run kitty as:
 
 .. code-block:: sh
 
-    kitty -o enabled_layouts=vertical --session <(echo "launch\nlaunch\nlaunch")
+    kitty -o enabled_layouts=vertical --session <(printf '%s\n' launch launch launch)
 
 Press :kbd:`Ctrl+Shift+F7` to enter the mode and then press the up and
 down arrow keys to focus the next/previous window. Press :kbd:`Shift+Up` or
@@ -316,6 +416,8 @@ below::
     map --new-mode XXX --on-unknown end ...
     # Pass unknown keys to the program running in the active window
     map --new-mode XXX --on-unknown passthrough ...
+    # Pass unknown keys to the program and exit the keyboard mode
+    map --new-mode XXX --on-unknown passthrough_and_end ...
 
 When a key matches an action in a custom keyboard mode, the action is performed
 and the custom keyboard mode remains in effect. If you would rather have the

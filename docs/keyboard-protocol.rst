@@ -34,12 +34,17 @@ inside the kitty terminal to report key events.
 
 In addition to kitty, this protocol is also implemented in:
 
+* The `AbsoluteTelnet SSH client <https://www.celestialsoftware.net/absolutetelnet-ssh-implements-the-kitty-keyboard-protocol>`__
 * The `alacritty terminal <https://github.com/alacritty/alacritty/pull/7125>`__
-* The `ghostty terminal <https://ghostty.org>`__
 * The `foot terminal <https://codeberg.org/dnkl/foot/issues/319>`__
+* The `ghostty terminal <https://ghostty.org>`__
 * The `iTerm2 terminal <https://gitlab.com/gnachman/iterm2/-/issues/10017>`__
+* The `Microsoft terminal <https://github.com/microsoft/terminal/pull/19817>`__
 * The `rio terminal <https://github.com/raphamorim/rio/commit/cd463ca37677a0fc48daa8795ea46dadc92b1e95>`__
+* The `TuiOS terminal (multiplexer) <https://github.com/Gaurav-Gosain/tuios/issues/26>`__
+* The `Warp terminal <https://github.com/warpdotdev/Warp/issues/8462#issuecomment-3857779488>`__
 * The `WezTerm terminal <https://wezfurlong.org/wezterm/config/lua/config/enable_kitty_keyboard.html>`__
+* The `xterm.js terminal <https://github.com/xtermjs/xterm.js/pull/5600>`__
 
 Libraries implementing this protocol:
 
@@ -47,6 +52,9 @@ Libraries implementing this protocol:
 * The `crossterm library <https://github.com/crossterm-rs/crossterm/pull/688>`__
 * The `textual library <https://github.com/Textualize/textual/pull/4631>`__
 * The vaxis library `go <https://sr.ht/~rockorager/vaxis/>`__ and `zig <https://github.com/rockorager/libvaxis/>`__
+* The `bubbletea library <https://github.com/charmbracelet/bubbletea/issues/869>`__
+* The `vtinput <https://unxed.github.com/vtinput>`__ and `vtui <https://github.com/unxed/vtui>`__ libraries
+* The `tcell library <https://github.com/gdamore/tcell/commit/c10909b991eb87c009554fe9b2dfa7276e2649c1>`__
 
 Programs implementing this protocol:
 
@@ -56,7 +64,8 @@ Programs implementing this protocol:
 * The `kakoune text editor <https://github.com/mawww/kakoune/issues/4103>`__
 * The `dte text editor <https://gitlab.com/craigbarnes/dte/-/issues/138>`__
 * The `Helix text editor <https://github.com/helix-editor/helix/pull/4939>`__
-* The `far2l file manager <https://github.com/elfmz/far2l/commit/e1f2ee0ef2b8332e5fa3ad7f2e4afefe7c96fc3b>`__
+* The `Flow control editor <https://github.com/neurocyte/flow?tab=readme-ov-file#requirements>`__
+* The `far2l <https://github.com/elfmz/far2l/commit/e1f2ee0ef2b8332e5fa3ad7f2e4afefe7c96fc3b>`__ and `f4 <https://github.com/unxed/f4>`__ file managers
 * The `Yazi file manager <https://github.com/sxyazi/yazi>`__
 * The `awrit web browser <https://github.com/chase/awrit>`__
 * The `Turbo Vision <https://github.com/magiblot/tvision/commit/6e5a7b46c6634079feb2ac98f0b890bbed59f1ba>`__/`Free Vision <https://gitlab.com/freepascal.org/fpc/source/-/issues/40673#note_2061428120>`__ IDEs
@@ -241,17 +250,19 @@ The terminal can optionally send the text associated with key events as a
 sequence of Unicode code points. This behavior is opt-in by the :ref:`progressive
 enhancement <progressive_enhancement>` mechanism described below. Some examples::
 
-    shift+a -> CSI 97 ; 2 ; 65 u  # The text 'A' is reported as 65
-    option+a -> CSI 97 ; ; 229 u  # The text 'å' is reported as 229
+    shift+a -> CSI 97 ; 2 ; 65 u   # The text 'A' is reported as 65
+    alt+a   -> CSI  0 ;   ; 229 u  # The text 'å' is reported as 229
 
 If multiple code points are present, they must be separated by colons.  If no
 known key is associated with the text the key number ``0`` must be used. The
 associated text must not contain control codes (control codes are code points
 below U+0020 and codepoints in the C0 and C1 blocks). In the above example, the
-:kbd:`option` modifier is consumed by macOS itself to produce the text å
-and therefore not reported in the keyboard protocol. On some platforms
-composition keys might produce no key information at all, in which case the key
-number ``0`` must be used.
+:kbd:`alt` modifier is consumed by the OS itself to produce the text å and not
+sent to the terminal emulator, which gets only a "text input" event and no
+information about modifiers, thus the event gets encoded with no modifiers.
+The exact behavior in these situations depends on the OS, keyboard layout, IME
+system in use and so on. In general, if the terminal emulator receives no key
+information, the key number 0 must be used to indicate a pure "text event".
 
 
 Non-Unicode keys
@@ -468,7 +479,10 @@ These keys are encoded using three schemes::
 
 In the above, if there are no modifiers, the modifier parameter is omitted.
 The modifier value is encoded as described in the :ref:`modifiers` section,
-above. When the second form is used, the number is always ``1`` and must be
+above, except that lock keys (such as :kbd:`Num lock` and :kbd:`Caps lock`)
+are not encoded as the legacy mode has no encoding for them.
+
+When the second form is used, the number is always ``1`` and must be
 omitted if the modifiers field is also absent. The third form becomes the
 second form when modifiers are present (``SS3 is the bytes 0x1b 0x4f``).
 

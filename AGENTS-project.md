@@ -1,14 +1,15 @@
 # Kitty workstation development
 
-This is a local clone of upstream Kitty v0.43.1. The working branch is
-`wmkitty-multiline-file-links`; there is no published personal fork yet.
-Preserve the pre-existing uncommitted multiline file URL changes. Do not include
-those changes in an unrelated commit or imply they are upstream releases.
+This is the workstation fork published at `Hans-Einar/kitty`, based on upstream
+Kitty v0.50.0 after MAINT-KITTY-0002. `main` tracks `personal/main`; `origin`
+points to `kovidgoyal/kitty`. Preserve manual save/resume, Python 3.14 TUI loop
+registration and the opt-in wrapped local file URL extension. These are fork
+changes, not claims about an upstream release.
 
 Use the installed SDP 2.1.0 profile and project namespace KITTY for new work.
-Existing PROJECT installation identities remain unchanged. Read the active
-[resume Session](SDP/Sessions/session-%230001--Kitty-resume.md) for this multi-turn
-goal and update its roadmap and turn journal before handing work back.
+Existing PROJECT installation identities remain unchanged. Read the completed
+[resume Session](SDP/Sessions/session-%230001--Kitty-resume.md) for historical context. Current upgrade work is tracked by
+[MAINT-KITTY-0002](SDP/Maintenance/MAINT-KITTY-0002.md).
 Documentation is English; conversation with the owner may be Norwegian.
 
 Source models belong in SDP/SDL/Kitty. The upstream-compatible build command is

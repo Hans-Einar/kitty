@@ -3,19 +3,25 @@
 
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
 from functools import lru_cache, partial, wraps
 from string import Formatter as StringFormatter
 from typing import (
     Any,
+    Literal,
     NamedTuple,
 )
 
 from .borders import Border, BorderColor
-from .constants import config_dir
+from .constants import config_dir, is_macos
 from .fast_data_types import (
     BOTTOM_EDGE,
     DECAWM,
+    LEFT_EDGE,
+    LNM,
+    RIGHT_EDGE,
+    TOP_EDGE,
     Color,
     Region,
     Screen,
@@ -24,6 +30,7 @@ from .fast_data_types import (
     get_options,
     pt_to_px,
     set_tab_bar_render_data,
+    split_into_graphemes,
     update_tab_bar_edge_colors,
     viewport_for_window,
     wcswidth,
@@ -34,25 +41,29 @@ from .types import WindowGeometry, run_once
 from .typing_compat import EdgeLiteral, PowerlineStyle
 from .utils import color_as_int, log_error, sgr_sanitizer_pat
 
+if is_macos:
+    from .fast_data_types import cocoa_is_secure_input_enabled  # type: ignore
+
 
 class TabBarData(NamedTuple):
     title: str
-    is_active: bool
-    needs_attention: bool
-    tab_id: int
-    num_windows: int
-    num_window_groups: int
-    layout_name: str
-    has_activity_since_last_focus: bool
-    active_fg: int | None
-    active_bg: int | None
-    inactive_fg: int | None
-    inactive_bg: int | None
-    num_of_windows_with_progress: int
-    total_progress: int
-    last_focused_window_with_progress_id: int
-    session_name: str
-    active_session_name: str
+    is_active: bool = False
+    needs_attention: bool = False
+    tab_id: int = -1
+    os_window_id: int = 0
+    num_windows: int = 0
+    num_window_groups: int = 0
+    layout_name: str = ''
+    has_activity_since_last_focus: bool = False
+    active_fg: int | None = None
+    active_bg: int | None = None
+    inactive_fg: int | None = None
+    inactive_bg: int | None = None
+    num_of_windows_with_progress: int = 0
+    total_progress: int = 0
+    last_focused_window_with_progress_id: int = 0
+    session_name: str = ''
+    active_session_name: str = ''
 
 
 class DrawData(NamedTuple):
@@ -72,6 +83,9 @@ class DrawData(NamedTuple):
     powerline_style: PowerlineStyle
     tab_bar_edge: EdgeLiteral
     max_tab_title_length: int
+    max_tab_title_lines: int
+    wrap_width: int
+    os_window_id: int
 
     def tab_fg(self, tab: TabBarData) -> int:
         if tab.is_active:
@@ -96,6 +110,30 @@ def as_rgb(x: int) -> int:
     return (x << 8) | 2
 
 
+VERTICAL_EDGES = frozenset({LEFT_EDGE, RIGHT_EDGE})
+
+
+def is_vertical_edge(edge: int) -> bool:
+    return edge in VERTICAL_EDGES
+
+
+edge_name_map: dict[int, EdgeLiteral] = {
+    LEFT_EDGE: 'left',
+    TOP_EDGE: 'top',
+    RIGHT_EDGE: 'right',
+    BOTTOM_EDGE: 'bottom',
+}
+
+
+def normalized_tab_bar_align(align: str) -> Literal['start', 'end', 'center']:
+    match align:
+        case 'left' | 'start':
+            return 'start'
+        case 'right' | 'end':
+            return 'end'
+    return 'center'
+
+
 @lru_cache
 def report_template_failure(template: str, e: str) -> None:
     log_error(f'Invalid tab title template: "{template}" with error: {e}')
@@ -110,7 +148,6 @@ def compile_template(template: str) -> Any:
 
 
 class ColorFormatter:
-
     draw_data: DrawData
     tab_data: TabBarData
 
@@ -149,17 +186,17 @@ class Formatter:
 @run_once
 def super_sub_maps() -> tuple[dict[int, int], dict[int, int]]:
     import string
+
     sup_table = str.maketrans(
-        string.ascii_lowercase + string.ascii_uppercase + string.digits + '+-=()',
-        'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖqʳˢᵗᵘᵛʷˣʸᶻ' 'ᴬᴮᶜᴰᴱᶠᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾQᴿˢᵀᵁⱽᵂˣʸᶻ' '⁰¹²³⁴⁵⁶⁷⁸⁹' '⁺⁻⁼⁽⁾')
+        string.ascii_lowercase + string.ascii_uppercase + string.digits + '+-=()', 'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖqʳˢᵗᵘᵛʷˣʸᶻᴬᴮᶜᴰᴱᶠᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾQᴿˢᵀᵁⱽᵂˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾'
+    )
     sub_table = str.maketrans(
-        string.ascii_lowercase + string.ascii_uppercase + string.digits + '+-=()',
-        'ₐbcdₑfgₕᵢⱼₖₗₘₙₒₚqᵣₛₜᵤᵥwₓyz' 'ₐbcdₑfgₕᵢⱼₖₗₘₙₒₚqᵣₛₜᵤᵥwₓyz' '₀₁₂₃₄₅₆₇₈₉' '₊₋₌₍₎')
+        string.ascii_lowercase + string.ascii_uppercase + string.digits + '+-=()', 'ₐbcdₑfgₕᵢⱼₖₗₘₙₒₚqᵣₛₜᵤᵥwₓyzₐbcdₑfgₕᵢⱼₖₗₘₙₒₚqᵣₛₜᵤᵥwₓyz₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎'
+    )
     return sup_table, sub_table
 
 
 class SupSub:
-
     def __init__(self, data: dict[str, Any], is_subscript: bool = False):
         self.__data = data
         self.__is_subscript = is_subscript
@@ -193,14 +230,13 @@ def draw_attributed_string(title: str, screen: Screen) -> None:
 @lru_cache(maxsize=16)
 def template_has_field(template: str, field: str) -> bool:
     q = StringFormatter()
-    for (literal_text, field_name, format_spec, conversion) in q.parse(template):
+    for literal_text, field_name, format_spec, conversion in q.parse(template):
         if field_name and field in field_name.split():
             return True
     return False
 
 
 class TabAccessor:
-
     def __init__(self, tab_id: int):
         self.tab_id = tab_id
 
@@ -253,16 +289,88 @@ class TabAccessor:
         p = int(tab.total_progress / tab.num_of_windows_with_progress)
         return f'{p}% '
 
+    @property
+    def program_status(self) -> str:
+        from .program_status import combined_status_symbol
+
+        tab = get_boss().tab_for_id(self.tab_id)
+        return combined_status_symbol(w.program_status for w in tab) if tab else ''
+
+    @property
+    def children_mem_usage(self) -> str:
+        from kittens.tui.utils import human_size
+
+        tab = get_boss().tab_for_id(self.tab_id)
+        if not tab:
+            return ''
+        ans = 0
+        for w in tab:
+            if (m := w.child.get_memory_used_by_child()) > 0:
+                ans += m
+
+        return human_size(ans, max_num_of_decimals=0)
 
 
 safe_builtins = {
-    'max': max, 'min': min, 'str': str, 'repr': repr, 'abs': abs, 'len': len, 'chr': chr, 'ord': ord, 're': re,
+    'max': max,
+    'min': min,
+    'str': str,
+    'repr': repr,
+    'abs': abs,
+    'len': len,
+    'chr': chr,
+    'ord': ord,
+    're': re,
     'wcswidth': wcswidth,
 }
 
 
-def draw_title(draw_data: DrawData, screen: Screen, tab: TabBarData, index: int, max_title_length: int = 0) -> None:
+@lru_cache(maxsize=16)
+def template_uses_max_title_length(template: str) -> bool:
+    # Conservative, as the length can be used anywhere in an expression, or by
+    # a custom draw_title() function
+    return 'max_title_length' in template or 'custom' in template
+
+
+# Laying out the tab bar draws each tab several times, each of which evaluates
+# its title template, so cache the titles for the duration of a single update.
+# Not across updates, as templates can use state not in TabBarData, such as
+# the progress of the windows in the tab.
+title_cache: dict[tuple[DrawData, TabBarData, int, int], str] | None = None
+
+
+@contextmanager
+def caching_titles() -> Generator[None, None, None]:
+    global title_cache
+    title_cache = {}
+    try:
+        yield
+    finally:
+        title_cache = None
+
+
+def apply_title_template(draw_data: DrawData, tab: TabBarData, index: int, max_title_length: int = 0) -> str:
+    if title_cache is None:
+        return evaluate_title_template(draw_data, tab, index, max_title_length)
+    template = draw_data.title_template
+    if tab.is_active and draw_data.active_title_template is not None:
+        template = draw_data.active_title_template
+    key_length = -1  # the title does not depend on the length
+    if template_uses_max_title_length(template):
+        key_length = max_title_length
+        if draw_data.max_tab_title_length > 0:
+            key_length = min(key_length, draw_data.max_tab_title_length)
+    key = draw_data, tab, index, key_length
+    if (title := title_cache.get(key)) is None:
+        title = title_cache[key] = evaluate_title_template(draw_data, tab, index, max_title_length)
+    return title
+
+
+def evaluate_title_template(draw_data: DrawData, tab: TabBarData, index: int, max_title_length: int = 0) -> str:
+    if tab.tab_id < 0:
+        return tab.title  # synthetic tab — render title literally, skip user template
     ta = TabAccessor(tab.tab_id)
+    si = ('🔑' if cocoa_is_secure_input_enabled() else '') if is_macos and tab.is_active else ''
     data = {
         'index': index,
         'layout_name': tab.layout_name,
@@ -285,10 +393,12 @@ def draw_title(draw_data: DrawData, screen: Screen, tab: TabBarData, index: int,
         'num_window_groups': tab.num_window_groups,
         'title': tab.title,
         'tab': ta,
+        'tab_id': tab.tab_id,
         'fmt': Formatter,
         'sup': SupSub(data),
         'sub': SupSub(data, True),
         'bell_symbol': draw_data.bell_on_tab if tab.needs_attention else '',
+        'secure_input_symbol': si,
         'activity_symbol': draw_data.tab_activity_symbol if tab.has_activity_since_last_focus else '',
         'max_title_length': max_title_length,
         'keyboard_mode': boss.mappings.current_keyboard_mode_name,
@@ -297,18 +407,112 @@ def draw_title(draw_data: DrawData, screen: Screen, tab: TabBarData, index: int,
     if tab.is_active and draw_data.active_title_template is not None:
         template = draw_data.active_title_template
     prefix = ''
-    if eval_locals['bell_symbol'] and not template_has_field(template, 'bell_symbol'):
-        prefix = '{bell_symbol}'
-    if eval_locals['activity_symbol'] and not template_has_field(template, 'activity_symbol'):
-        prefix += '{activity_symbol}'
+    for default_prefix in ('bell_symbol', 'activity_symbol', 'secure_input_symbol'):
+        if eval_locals[default_prefix] and not template_has_field(template, default_prefix):
+            prefix += '{' + default_prefix + '}'
     if prefix:
         template = '{fmt.fg.red}' + prefix + '{fmt.fg.tab}' + template
     eval_locals['custom'] = load_custom_draw_title(eval_locals)
     try:
-        title = eval(compile_template(template), {'__builtins__': safe_builtins}, eval_locals)
+        title: str = eval(compile_template(template), {'__builtins__': safe_builtins}, eval_locals)
     except Exception as e:
         report_template_failure(template, str(e))
         title = tab.title
+    return title
+
+
+def wrap_title(title: str, width: int) -> str:
+    """Insert newlines into title so that no line is wider than width cells.
+
+    SGR escapes are zero width, so they never count towards the width and are
+    left attached to the text that follows them. Splitting happens on grapheme
+    boundaries so that a wrap can never land inside a multi-codepoint grapheme.
+    """
+    if width < 1:
+        return title
+    lines = []
+    for paragraph in title.split('\n'):
+        cur, cur_width = '', 0
+        for part in sgr_sanitizer_pat(for_splitting=True).split(paragraph):
+            if not part:
+                continue
+            if part.startswith('\x1b'):
+                cur += part
+                continue
+            part_width = max(0, wcswidth(part))
+            if cur_width + part_width <= width:
+                cur += part
+                cur_width += part_width
+            else:
+                ginfo = tuple((max(0, wcswidth(g)), len(g)) for g in split_into_graphemes(part))
+                n = len(ginfo)
+                i = 0
+                pos = 0
+                while i < n:
+                    j, batch_w, batch_len = i, 0, 0
+                    while j < n:
+                        w, glen = ginfo[j]
+                        if cur_width + batch_w and cur_width + batch_w + w > width:
+                            break
+                        batch_w += w
+                        batch_len += glen
+                        j += 1
+                    if j > i:
+                        cur += part[pos : pos + batch_len]
+                        cur_width += batch_w
+                        pos += batch_len
+                        i = j
+                    if i < n:
+                        lines.append(cur)
+                        cur, cur_width = '', 0
+        lines.append(cur)
+    return '\n'.join(lines)
+
+
+def truncate_line(line: str, width: int) -> str:
+    """Append an ellipsis to line, trimming it so the result fits in width cells.
+
+    Used to mark a title as having had content dropped, so the ellipsis is added
+    even when line already fits.
+    """
+    if width < 1:
+        return line
+    out, cur_width = '', 0
+    for part in sgr_sanitizer_pat(for_splitting=True).split(line):
+        if not part:
+            continue
+        if part.startswith('\x1b'):
+            out += part
+            continue
+        part_width = max(0, wcswidth(part))
+        if cur_width + part_width <= width - 1:
+            out += part
+            cur_width += part_width
+        else:
+            for grapheme in split_into_graphemes(part):
+                w = max(0, wcswidth(grapheme))
+                if cur_width + w > width - 1:
+                    return out + '…'
+                out += grapheme
+                cur_width += w
+    return out + '…'
+
+
+def draw_title(draw_data: DrawData, screen: Screen, tab: TabBarData, index: int, max_title_length: int = 0) -> None:
+    title = apply_title_template(draw_data, tab, index, max_title_length)
+    if draw_data.max_tab_title_lines > 1 and draw_data.wrap_width:
+        title = wrap_title(title, draw_data.wrap_width)
+    if '\n' in title:
+        # Drop lines that do not fit, so a title cannot bleed into the tab below
+        # it. A limit of one also keeps horizontal tab bars on a single row.
+        lines = title.split('\n')
+        limit = max(1, draw_data.max_tab_title_lines)
+        if len(lines) > limit:
+            # Mark the truncation, since the caller's ellipsis logic only fires
+            # when the final line reaches the full width of the tab.
+            del lines[limit:]
+            lines[-1] = truncate_line(lines[-1], draw_data.wrap_width or max_title_length)
+        title = '\n'.join(lines)
     before_draw = screen.cursor.x
     draw_attributed_string(title, screen)
     if draw_data.max_tab_title_length > 0:
@@ -322,12 +526,10 @@ DrawTabFunc = Callable[[DrawData, Screen, TabBarData, int, int, int, bool, Extra
 
 
 def draw_tab_with_slant(
-    draw_data: DrawData, screen: Screen, tab: TabBarData,
-    before: int, max_tab_length: int, index: int, is_last: bool,
-    extra_data: ExtraData
+    draw_data: DrawData, screen: Screen, tab: TabBarData, before: int, max_tab_length: int, index: int, is_last: bool, extra_data: ExtraData
 ) -> int:
     orig_fg = screen.cursor.fg
-    left_sep, right_sep = ('', '') if draw_data.tab_bar_edge == 'top' else ('', '')
+    left_sep, right_sep = ('', '') if draw_data.tab_bar_edge in ('top', 'left') else ('', '')
     tab_bg = screen.cursor.bg
     slant_fg = as_rgb(color_as_int(draw_data.default_bg))
 
@@ -365,9 +567,7 @@ def draw_tab_with_slant(
 
 
 def draw_tab_with_separator(
-    draw_data: DrawData, screen: Screen, tab: TabBarData,
-    before: int, max_tab_length: int, index: int, is_last: bool,
-    extra_data: ExtraData
+    draw_data: DrawData, screen: Screen, tab: TabBarData, before: int, max_tab_length: int, index: int, is_last: bool, extra_data: ExtraData
 ) -> int:
     if draw_data.leading_spaces:
         screen.draw(' ' * draw_data.leading_spaces)
@@ -391,9 +591,7 @@ def draw_tab_with_separator(
 
 
 def draw_tab_with_fade(
-    draw_data: DrawData, screen: Screen, tab: TabBarData,
-    before: int, max_tab_length: int, index: int, is_last: bool,
-    extra_data: ExtraData
+    draw_data: DrawData, screen: Screen, tab: TabBarData, before: int, max_tab_length: int, index: int, is_last: bool, extra_data: ExtraData
 ) -> int:
     orig_bg = screen.cursor.bg
     tab_bg = color_from_int(orig_bg >> 8)
@@ -411,28 +609,40 @@ def draw_tab_with_fade(
         if extra > 0:
             screen.cursor.x -= extra + 1
             screen.draw('…')
-    for bg in reversed(fade_colors):
-        if extra >= 0:
-            break
-        extra += 1
-        screen.cursor.bg = bg
+    if draw_data.tab_bar_edge in ('left', 'right'):
+        # For vertical tabs the background is pre-filled, so place trailing
+        # fade cells flush with the right edge of the last title line.
+        num_fade = len(fade_colors)
+        fade_start = screen.columns - num_fade
+        text_end = screen.cursor.x
+        last_row = screen.cursor.y
+        if text_end < max_tab_length:
+            fade_to_skip = max(0, text_end - fade_start)
+            screen.cursor.x = max(text_end, fade_start)
+            screen.cursor.y = last_row
+            for bg in list(reversed(fade_colors))[fade_to_skip:]:
+                screen.cursor.bg = bg
+                screen.draw(' ')
+        end = screen.cursor.x
+        screen.cursor.bg = as_rgb(color_as_int(draw_data.default_bg))
+    else:
+        for bg in reversed(fade_colors):
+            if extra >= 0:
+                break
+            extra += 1
+            screen.cursor.bg = bg
+            screen.draw(' ')
+        end = screen.cursor.x
+        screen.cursor.bg = as_rgb(color_as_int(draw_data.default_bg))
         screen.draw(' ')
-    end = screen.cursor.x
-    screen.cursor.bg = as_rgb(color_as_int(draw_data.default_bg))
-    screen.draw(' ')
     return end
 
 
-powerline_symbols: dict[PowerlineStyle, tuple[str, str]] = {
-    'slanted': ('', '╱'),
-    'round': ('', '')
-}
+powerline_symbols: dict[PowerlineStyle, tuple[str, str]] = {'slanted': ('', '╱'), 'round': ('', '')}
 
 
 def draw_tab_with_powerline(
-    draw_data: DrawData, screen: Screen, tab: TabBarData,
-    before: int, max_tab_length: int, index: int, is_last: bool,
-    extra_data: ExtraData
+    draw_data: DrawData, screen: Screen, tab: TabBarData, before: int, max_tab_length: int, index: int, is_last: bool, extra_data: ExtraData
 ) -> int:
     tab_bg = screen.cursor.bg
     tab_fg = screen.cursor.fg
@@ -445,13 +655,21 @@ def draw_tab_with_powerline(
         needs_soft_separator = False
 
     separator_symbol, soft_separator_symbol = powerline_symbols.get(draw_data.powerline_style, ('', ''))
-    min_title_length = 1 + 2
+    is_vertical = draw_data.tab_bar_edge in ('left', 'right')
+    # Vertical tabs draw their separator in a column of its own, so they need
+    # room only for the leading space and a single character of the title.
+    min_title_length = 1 if is_vertical else 1 + 2
     start_draw = 2
+    first_row = screen.cursor.y
 
     if screen.cursor.x == 0:
         screen.cursor.bg = tab_bg
         screen.draw(' ')
         start_draw = 1
+
+    if is_vertical and draw_data.wrap_width:
+        # Keep wrapped lines clear of the last column, which holds the separator.
+        draw_data = draw_data._replace(wrap_width=min(draw_data.wrap_width, max(1, screen.columns - 1 - screen.cursor.x)))
 
     screen.cursor.bg = tab_bg
     if min_title_length >= max_tab_length:
@@ -462,6 +680,20 @@ def draw_tab_with_powerline(
         if extra > 0 and extra + 1 < screen.cursor.x:
             screen.cursor.x -= extra + 1
             screen.draw('…')
+
+    if is_vertical:
+        # Clear anything left after a truncation ellipsis.
+        screen.cursor.bg = tab_bg
+        screen.draw(' ' * (screen.columns - 1 - screen.cursor.x))
+        # Draw the separator at the right edge of every row the title occupies,
+        # so that wrapped titles have a straight edge.
+        screen.cursor.fg = tab_bg
+        screen.cursor.bg = default_bg
+        for y in range(first_row, screen.cursor.y + 1):
+            screen.cursor.x = screen.columns - 1
+            screen.cursor.y = y
+            screen.draw(separator_symbol)
+        return screen.cursor.x
 
     if not needs_soft_separator:
         screen.draw(' ')
@@ -490,6 +722,7 @@ def draw_tab_with_powerline(
 def load_custom_draw_tab_module() -> dict[str, Any]:
     import runpy
     import traceback
+
     try:
         return runpy.run_path(os.path.join(config_dir, 'tab_bar.py'))
     except FileNotFoundError:
@@ -509,9 +742,7 @@ def load_custom_draw_tab() -> DrawTabFunc:
 
     @wraps(func)
     def draw_tab(
-        draw_data: DrawData, screen: Screen, tab: TabBarData,
-        before: int, max_tab_length: int, index: int, is_last: bool,
-        extra_data: ExtraData
+        draw_data: DrawData, screen: Screen, tab: TabBarData, before: int, max_tab_length: int, index: int, is_last: bool, extra_data: ExtraData
     ) -> int:
         try:
             return func(draw_data, screen, tab, before, max_tab_length, index, is_last, extra_data)
@@ -522,8 +753,12 @@ def load_custom_draw_tab() -> DrawTabFunc:
     return draw_tab
 
 
-class CustomDrawTitleFunc:
+def clear_caches() -> None:
+    load_custom_draw_tab.clear_cached()
+    load_custom_draw_tab_module.clear_cached()
 
+
+class CustomDrawTitleFunc:
     def __init__(self, data: dict[str, Any], implementation: Callable[[dict[str, Any]], str] | None = None):
         self._implementation = implementation
         self._data = {} if implementation is None else data.copy()
@@ -532,6 +767,7 @@ class CustomDrawTitleFunc:
         if self._implementation is None:
             return ''
         return str(self._implementation(self._data))
+
     __repr__ = __str__
 
 
@@ -547,26 +783,51 @@ class CellRange(NamedTuple):
 
 class TabExtent(NamedTuple):
     tab_id: int
-    cell_range: CellRange
+    x: CellRange
+    y: CellRange = CellRange(0, 0)
 
-    def shifted(self, shift: int) -> 'TabExtent':
-        return TabExtent(self.tab_id, CellRange(self.cell_range.start + shift, self.cell_range.end + shift))
+    def shifted(self, x: int = 0, y: int = 0) -> 'TabExtent':
+        return TabExtent(
+            self.tab_id,
+            CellRange(self.x.start + x, self.x.end + x),
+            CellRange(self.y.start + y, self.y.end + y),
+        )
+
+    def contains(self, x: int, y: int) -> bool:
+        return self.x.start <= x <= self.x.end and self.y.start <= y <= self.y.end
+
+
+class WindowDropTarget(NamedTuple):
+    tab_id: int = 0
+    # None means an existing tab; zero means append, otherwise insert before this tab.
+    before_tab_id: int | None = None
 
 
 class TabBar:
-
     def __init__(self, os_window_id: int):
         self.os_window_id = os_window_id
+        self.last_laid_out_tabs: Sequence[TabBarData] = ()
         self.num_tabs = 1
         self.data_buffer_size = 0
         self.blank_rects: tuple[Border, ...] = ()
         self.tab_extents: Sequence[TabExtent] = ()
+        self.window_drop_insert_before: int | None = None
+        self.tab_drop_insert_before: int | None = None
         self.laid_out_once = False
+        self.left_edge_is_default = True
+        self.right_edge_is_default = True
+        self._last_viewport: tuple[Region, Region, int, int] | None = None
         self.apply_options()
 
     def apply_options(self) -> None:
         opts = get_options()
         self.dirty = True
+        self.tab_bar_edge = opts.tab_bar_edge
+        self.is_vertical = is_vertical_edge(opts.tab_bar_edge)
+        # Multi-line titles only make sense for vertical tab bars, where each
+        # tab gets its own row(s).
+        self.max_tab_title_lines = max(1, opts.tab_title_max_lines) if self.is_vertical else 1
+        self.tab_title_wrap = opts.tab_title_wrap if self.is_vertical else 0
         self.margin_width = pt_to_px(opts.tab_bar_margin_width, self.os_window_id)
         self.cell_width, cell_height = cell_size_for_window(self.os_window_id)
         if not hasattr(self, 'screen'):
@@ -590,17 +851,28 @@ class TabBar:
         self.active_bg = as_rgb(color_as_int(opts.active_tab_background))
         self.active_fg = as_rgb(color_as_int(opts.active_tab_foreground))
         self.draw_data = DrawData(
-            self.leading_spaces, self.sep, self.trailing_spaces, opts.bell_on_tab,
-            opts.tab_fade, opts.active_tab_foreground, opts.active_tab_background,
-            opts.inactive_tab_foreground, opts.inactive_tab_background,
-            opts.tab_bar_background or opts.background, opts.tab_title_template,
+            self.leading_spaces,
+            self.sep,
+            self.trailing_spaces,
+            opts.bell_on_tab,
+            opts.tab_fade,
+            opts.active_tab_foreground,
+            opts.active_tab_background,
+            opts.inactive_tab_foreground,
+            opts.inactive_tab_background,
+            opts.tab_bar_background or opts.background,
+            opts.tab_title_template,
             opts.active_tab_title_template,
             opts.tab_activity_symbol,
             opts.tab_powerline_style,
-            'bottom' if opts.tab_bar_edge == BOTTOM_EDGE else 'top',
+            edge_name_map[opts.tab_bar_edge],
             opts.tab_title_max_length,
+            self.max_tab_title_lines,
+            0,  # resolved per-layout, since 'yes' means the tab bar's width
+            self.os_window_id,
         )
         ts = opts.tab_bar_style
+        self.draw_func_is_custom = ts == 'custom'
         if ts == 'separator':
             self.draw_func: DrawTabFunc = draw_tab_with_separator
         elif ts == 'powerline':
@@ -611,12 +883,14 @@ class TabBar:
             self.draw_func = load_custom_draw_tab()
         else:
             self.draw_func = draw_tab_with_fade
-        if opts.tab_bar_align == 'center':
-            self.align: Callable[[], None] = partial(self.align_with_factor, 2)
-        elif opts.tab_bar_align == 'right':
-            self.align = self.align_with_factor
-        else:
-            self.align = lambda: None
+        self.tab_bar_align = normalized_tab_bar_align(opts.tab_bar_align)
+        match self.tab_bar_align:
+            case 'center':
+                self.align: Callable[[], None] = partial(self.align_with_factor, 2)
+            case 'end':
+                self.align = self.align_with_factor
+            case 'start':
+                self.align = lambda: None
 
     def patch_colors(self, spec: dict[str, int | None]) -> None:
         opts = get_options()
@@ -669,66 +943,143 @@ class TabBar:
         blank_rects: list[Border] = []
         bg = BorderColor.tab_bar_margin_color if opts.tab_bar_margin_color is not None else BorderColor.default_bg
         if opts.tab_bar_margin_height:
-            if opts.tab_bar_edge == BOTTOM_EDGE:
+            if self.is_vertical:
+                if opts.tab_bar_edge == LEFT_EDGE:
+                    if opts.tab_bar_margin_height.outer:
+                        blank_rects.append(Border(0, 0, tab_bar.left, vh, bg))
+                    if opts.tab_bar_margin_height.inner:
+                        blank_rects.append(Border(tab_bar.right, 0, central.left, vh, bg))
+                else:
+                    if opts.tab_bar_margin_height.outer:
+                        blank_rects.append(Border(tab_bar.right, 0, vw, vh, bg))
+                    if opts.tab_bar_margin_height.inner:
+                        blank_rects.append(Border(central.right, 0, tab_bar.left, vh, bg))
+            elif opts.tab_bar_edge == BOTTOM_EDGE:
                 if opts.tab_bar_margin_height.outer:
                     blank_rects.append(Border(0, tab_bar.bottom, vw, vh, bg))
                 if opts.tab_bar_margin_height.inner:
-                    blank_rects.append(Border(0, central.bottom, vw, vh, bg))
-            else: # top
+                    blank_rects.append(Border(0, central.bottom, vw, tab_bar.top, bg))
+            else:  # top
                 if opts.tab_bar_margin_height.outer:
                     blank_rects.append(Border(0, 0, vw, tab_bar.top, bg))
                 if opts.tab_bar_margin_height.inner:
                     blank_rects.append(Border(0, tab_bar.bottom, vw, central.top, bg))
         g = self.window_geometry
-        left_bg = right_bg = bg
-        if opts.tab_bar_margin_color is None or opts.tab_bar_margin_width == 0:
-            left_bg = BorderColor.tab_bar_left_edge_color
-            right_bg = BorderColor.tab_bar_right_edge_color
-        if g.left > 0:
-            blank_rects.append(Border(0, g.top, g.left, g.bottom, left_bg))
-        if g.right - 1 < vw:
-            blank_rects.append(Border(g.right - 1, g.top, vw, g.bottom, right_bg))
+        if self.is_vertical:
+            if opts.tab_bar_margin_color is None:
+                top_bg = bg if self.left_edge_is_default else BorderColor.tab_bar_left_edge_color
+                bottom_bg = bg if self.right_edge_is_default else BorderColor.tab_bar_right_edge_color
+            else:
+                top_bg = bottom_bg = bg
+            if g.left > tab_bar.left:
+                blank_rects.append(Border(tab_bar.left, g.top, g.left, g.bottom, bg))
+            if g.right < tab_bar.right:
+                blank_rects.append(Border(g.right, g.top, tab_bar.right, g.bottom, bg))
+            if g.top > tab_bar.top:
+                blank_rects.append(Border(g.left, tab_bar.top, g.right, g.top, top_bg))
+            if g.bottom < tab_bar.bottom:
+                blank_rects.append(Border(g.left, g.bottom, g.right, tab_bar.bottom, bottom_bg))
+        else:
+            if opts.tab_bar_margin_color is None:
+                left_bg = bg if self.left_edge_is_default else BorderColor.tab_bar_left_edge_color
+                right_bg = bg if self.right_edge_is_default else BorderColor.tab_bar_right_edge_color
+            else:
+                left_bg = right_bg = bg
+            if g.left > tab_bar.left:
+                blank_rects.append(Border(tab_bar.left, g.top, g.left, g.bottom, left_bg))
+            if g.right < tab_bar.right:
+                blank_rects.append(Border(g.right, g.top, tab_bar.right, g.bottom, right_bg))
+            if g.top > tab_bar.top:
+                blank_rects.append(Border(g.left, tab_bar.top, g.right, g.top, bg))
+            if g.bottom < tab_bar.bottom:
+                blank_rects.append(Border(g.left, g.bottom, g.right, tab_bar.bottom, bg))
         self.blank_rects = tuple(blank_rects)
 
     def layout(self) -> None:
         central, tab_bar, vw, vh, cell_width, cell_height = viewport_for_window(self.os_window_id)
-        if tab_bar.width < 2:
+        if self.is_vertical:
+            if tab_bar.width < cell_width or tab_bar.height < cell_height:
+                return
+        elif tab_bar.width < 2:
             return
         self.cell_width = cell_width
+        self.cell_height = cell_height
         s = self.screen
-        viewport_width = max(4 * cell_width, tab_bar.width - 2 * self.margin_width)
-        ncells = viewport_width // cell_width
-        s.resize(1, ncells)
-        s.reset_mode(DECAWM)
+        if self.is_vertical:
+            available_height = tab_bar.height - 2 * self.margin_width
+            nlines = max(1, available_height // cell_height)
+            ncols = max(1, tab_bar.width // cell_width)
+            s.resize(nlines, ncols)
+            s.reset_mode(DECAWM)
+            # So that a newline in a tab title returns to the start of the next
+            # line rather than staircasing to the right.
+            s.set_mode(LNM)
+            cell_area_height = nlines * cell_height
+            available_height_for_top_margin = max(0, tab_bar.height - self.margin_width - cell_area_height)
+            extra_height = max(0, tab_bar.height - 2 * self.margin_width - cell_area_height)
+            top_margin = min(self.margin_width + extra_height // 2, available_height_for_top_margin)
+            self.window_geometry = g = WindowGeometry(
+                tab_bar.left, tab_bar.top + top_margin, tab_bar.right, tab_bar.top + top_margin + cell_area_height, s.columns, s.lines
+            )
+        else:
+            available_width = tab_bar.width - 2 * self.margin_width
+            ncells = max(4, available_width // cell_width)
+            s.resize(1, ncells)
+            s.reset_mode(DECAWM)
+            cell_area_width = ncells * cell_width
+            available_width_for_left_margin = max(0, tab_bar.width - self.margin_width - cell_area_width)
+            extra_width = max(0, tab_bar.width - 2 * self.margin_width - cell_area_width)
+            left_margin = min(self.margin_width + extra_width // 2, available_width_for_left_margin)
+            self.window_geometry = g = WindowGeometry(left_margin, tab_bar.top, left_margin + cell_area_width, tab_bar.bottom, s.columns, s.lines)
         self.laid_out_once = True
-        margin = (viewport_width - ncells * cell_width) // 2 + self.margin_width
-        self.window_geometry = g = WindowGeometry(
-            margin, tab_bar.top, viewport_width - margin, tab_bar.bottom, s.columns, s.lines)
+        self._last_viewport = (central, tab_bar, vw, vh)
         self.update_blank_rects(central, tab_bar, vw, vh)
         set_tab_bar_render_data(self.os_window_id, self.screen, *g[:4])
 
-    def update(self, data: Sequence[TabBarData]) -> None:
+    def _update_edge_defaults(self, is_vertical: bool) -> bool:
+        """Call update_tab_bar_edge_colors, update cached is-default flags.
+        Returns True when the flags changed and blank_rects need rebuilding."""
+        result = update_tab_bar_edge_colors(self.os_window_id, is_vertical)
+        if result is None:
+            return False
+        left_is_default, right_is_default = result
+        if left_is_default != self.left_edge_is_default or right_is_default != self.right_edge_is_default:
+            self.left_edge_is_default = left_is_default
+            self.right_edge_is_default = right_is_default
+            if self._last_viewport is not None:
+                self.update_blank_rects(*self._last_viewport)
+                return True
+        return False
+
+    def update(self, data: Sequence[TabBarData]) -> bool:
         if not self.laid_out_once:
-            return
+            return False
+        with caching_titles():
+            if self.is_vertical:
+                return self.update_vertical(data)
+            return self.update_horizontal(data)
+
+    def update_horizontal(self, data: Sequence[TabBarData]) -> bool:
         s = self.screen
         last_tab = data[-1] if data else None
         ed = ExtraData()
+        self.last_laid_out_tabs = data
 
         def draw_tab(i: int, tab: TabBarData, cell_ranges: list[TabExtent], max_tab_length: int) -> None:
             ed.prev_tab = data[i - 1] if i > 0 else None
             ed.next_tab = data[i + 1] if i + 1 < len(data) else None
-            s.cursor.bg = as_rgb(self.draw_data.tab_bg(t))
-            s.cursor.fg = as_rgb(self.draw_data.tab_fg(t))
-            s.cursor.bold, s.cursor.italic = self.active_font_style if t.is_active else self.inactive_font_style
+            s.cursor.bg = as_rgb(self.draw_data.tab_bg(tab))
+            s.cursor.fg = as_rgb(self.draw_data.tab_fg(tab))
+            s.cursor.bold, s.cursor.italic = self.active_font_style if tab.is_active else self.inactive_font_style
             before = s.cursor.x
-            end = self.draw_func(self.draw_data, s, t, before, max_tab_length, i + 1, t is last_tab, ed)
+            end = self.draw_func(self.draw_data, s, tab, before, max_tab_length, i + 1, tab is last_tab, ed)
             s.cursor.bg = s.cursor.fg = 0
-            cell_ranges.append(TabExtent(tab_id=tab.tab_id, cell_range=CellRange(before, end)))
-            if not ed.for_layout and t is not last_tab and s.cursor.x > s.columns - max_tab_lengths[i+1]:
+            cell_ranges.append(TabExtent(tab_id=tab.tab_id, x=CellRange(before, end)))
+            if not ed.for_layout and tab is not last_tab and s.cursor.x > s.columns - max_tab_lengths[i + 1]:
                 # Stop if there is no space for next tab
                 s.cursor.x = s.columns - 2
                 s.cursor.bg = as_rgb(color_as_int(self.draw_data.default_bg))
-                s.cursor.fg = as_rgb(0xff0000)
+                s.cursor.fg = as_rgb(0xFF0000)
                 s.draw(' …')
                 raise StopIteration()
 
@@ -736,8 +1087,9 @@ class TabBar:
         ideal_tab_lengths = [i for i in range(len(data))]
         default_max_tab_length = max(1, (s.columns // max(1, len(data))) - 1)
         max_tab_lengths = [default_max_tab_length for _ in range(len(data))]
+        overhangs = [0] * len(data)
+        truncated: list[int] = []
         active_idx = 0
-        extra = 0
         ed.for_layout = True
         for i, t in enumerate(data):
             s.cursor.x = 0
@@ -747,19 +1099,51 @@ class TabBar:
                 active_idx = i
             if tl < default_max_tab_length:
                 max_tab_lengths[i] = tl
-                extra += default_max_tab_length - tl
-        if extra > 0:
+            elif tl > default_max_tab_length:
+                truncated.append(i)
+
+        def tab_width(i: int) -> int:
+            return min(ideal_tab_lengths[i], max_tab_lengths[i] + overhangs[i])
+
+        # The overhang is measured at the default max length, the built-in
+        # styles draw the same overhang at any length, but custom ones might
+        # not, so leave them a cell of slack per truncated tab
+        margin = len(truncated) if self.draw_func_is_custom else 0
+
+        # A truncated tab can be drawn wider than its max length, for example
+        # by a separator after the title, so measure by how much. Draw it at a
+        # column like the one it will actually start at, as styles may draw
+        # differently at column zero. Overhangs only use up free space, so once
+        # there is none left, the remaining ones cannot change the layout and
+        # measuring them, which means drawing the tab again, can be skipped.
+        free = s.columns - margin - sum(min(tl, ml) for tl, ml in zip(ideal_tab_lengths, max_tab_lengths))
+        for i in truncated:
+            if free <= 0:
+                break
+            s.cursor.x = start = min(i, 1)
+            draw_tab(i, data[i], [], default_max_tab_length)
+            overhangs[i] = max(0, s.cursor.x - start - default_max_tab_length)
+            free -= min(overhangs[i], ideal_tab_lengths[i] - max_tab_lengths[i])
+
+        def space_left() -> int:
+            return s.columns - margin - sum(tab_width(i) for i in range(len(data)))
+
+        extra = space_left()
+        if data and extra > 0:
             if ideal_tab_lengths[active_idx] > max_tab_lengths[active_idx]:
                 d = min(extra, ideal_tab_lengths[active_idx] - max_tab_lengths[active_idx])
                 max_tab_lengths[active_idx] += d
-                extra -= d
-            if extra > 0:
+            # Hand out the remaining space evenly, repeating as a tab may need
+            # less than its share, leaving more for the others. A tab whose
+            # overhang already covers its ideal length stays an over achiever,
+            # raising its max length is harmless as it does not change its width.
+            while (extra := space_left()) > 0:
                 over_achievers = tuple(i for i in range(len(data)) if ideal_tab_lengths[i] > max_tab_lengths[i])
-                if over_achievers:
-                    amt_per_over_achiever = extra // len(over_achievers)
-                    if amt_per_over_achiever > 0:
-                        for i in over_achievers:
-                            max_tab_lengths[i] += amt_per_over_achiever
+                if not over_achievers:
+                    break
+                amt, rem = divmod(extra, len(over_achievers))
+                for n, i in enumerate(over_achievers):
+                    max_tab_lengths[i] = min(ideal_tab_lengths[i], max_tab_lengths[i] + amt + (n < rem))
 
         s.cursor.x = 0
         s.erase_in_line(2, False)
@@ -773,26 +1157,203 @@ class TabBar:
         self.tab_extents = cr
         s.erase_in_line(0, False)  # Ensure no long titles bleed after the last tab
         self.align()
-        update_tab_bar_edge_colors(self.os_window_id)
+        self.draw_drop_insert_marker()
+        return self._update_edge_defaults(False)
+
+    def update_vertical(self, data: Sequence[TabBarData]) -> bool:
+        s = self.screen
+        self.last_laid_out_tabs = data
+        self.tab_extents = ()
+        s.cursor.x = s.cursor.y = 0
+        s.erase_in_display(2, False)
+        if not data:
+            return self._update_edge_defaults(True)
+        max_tab_length = max(1, s.columns - 1)
+        # Never allow a title to use more lines than remain below it, otherwise
+        # drawing it would scroll the tab bar and lose the tabs already drawn.
+        max_tab_lines = max(1, min(self.max_tab_title_lines, s.lines))
+        # tab_title_wrap of -1 ('yes') means wrap at whatever width the tab bar
+        # happens to have, which is only known now that the screen is laid out.
+        wrap_width = max_tab_length if self.tab_title_wrap < 0 else min(self.tab_title_wrap, max_tab_length)
+
+        def draw_one(i: int, t: TabBarData, row: int, for_layout: bool, height: int = 0) -> int:
+            "Draw tab i at row, returning the number of lines it occupies"
+            bg = as_rgb(self.draw_data.tab_bg(t))
+            s.cursor.bg = bg
+            s.cursor.fg = as_rgb(self.draw_data.tab_fg(t))
+            s.cursor.bold, s.cursor.italic = self.active_font_style if t.is_active else self.inactive_font_style
+            if height:
+                # Fill the tab's full width first and draw the title over it, so
+                # that a short line does not leave the rest of the row showing
+                # the tab bar background.
+                for line in range(row, min(s.lines, row + height)):
+                    s.cursor.x = 0
+                    s.cursor.y = line
+                    s.draw(' ' * s.columns)
+            s.cursor.x = 0
+            s.cursor.y = row
+            ed = ExtraData()
+            ed.prev_tab = data[i - 1] if i > 0 else None
+            ed.next_tab = data[i + 1] if i + 1 < len(data) else None
+            ed.for_layout = for_layout
+            dd = self.draw_data._replace(max_tab_title_lines=min(max_tab_lines, s.lines - row), wrap_width=wrap_width)
+            self.draw_func(dd, s, t, 0, max_tab_length, i + 1, True, ed)
+            return min(max_tab_lines, max(1, s.cursor.y - row + 1))
+
+        # Measure how many lines each title actually needs, so that tabs can be
+        # packed without overlapping. Drawing is the only way to measure, since
+        # a custom draw_tab function may render anything it likes.
+        heights = [draw_one(i, t, 0, True) for i, t in enumerate(data)]
+        s.cursor.x = s.cursor.y = 0
+        s.erase_in_display(2, False)
+
+        def num_that_fit(budget: int, spacing: int) -> tuple[int, int]:
+            n = total = 0
+            for h in heights:
+                needed = h + (spacing if n else 0)
+                if total + needed > budget:
+                    break
+                total += needed
+                n += 1
+            return n, total
+
+        # Leave a blank line between tabs while there is room for it, dropping it
+        # automatically once the tabs need the space.
+        spacing = 1
+        rows_to_draw, drawn_lines = num_that_fit(s.lines, spacing)
+        if rows_to_draw < len(data):
+            spacing = 0
+            rows_to_draw, drawn_lines = num_that_fit(s.lines, spacing)
+        draw_ellipsis = rows_to_draw < len(data) and s.lines > 1
+        if draw_ellipsis:
+            # Reserve a line for the ellipsis, unless that leaves no room for
+            # even a single tab, in which case prefer showing the tab.
+            n, total = num_that_fit(s.lines - 1, spacing)
+            if n:
+                rows_to_draw, drawn_lines = n, total
+            else:
+                draw_ellipsis = False
+        total_lines = drawn_lines + int(draw_ellipsis)
+        if self.tab_bar_align == 'center':
+            start_row = max(0, (s.lines - total_lines) // 2)
+        elif self.tab_bar_align == 'end':
+            start_row = max(0, s.lines - total_lines)
+        else:
+            start_row = 0
+        cr: list[TabExtent] = []
+        row = start_row
+        for i, t in enumerate(data[:rows_to_draw]):
+            if i:
+                row += spacing
+            draw_one(i, t, row, False, height=heights[i])
+            cr.append(TabExtent(tab_id=t.tab_id, x=CellRange(0, s.columns - 1), y=CellRange(row, min(s.lines - 1, row + heights[i] - 1))))
+            row += heights[i]
+        if draw_ellipsis:
+            s.cursor.x = 0
+            s.cursor.y = row
+            s.cursor.bg = as_rgb(color_as_int(self.draw_data.default_bg))
+            s.cursor.fg = as_rgb(0xFF0000)
+            s.draw('…')
+        self.tab_extents = tuple(cr)
+        self.draw_drop_insert_marker()
+        return self._update_edge_defaults(True)
+
+    def draw_drop_insert_marker(self) -> None:
+        before = self.tab_drop_insert_before if self.tab_drop_insert_before is not None else self.window_drop_insert_before
+        if before is None:
+            return
+        extents = tuple(te for te in self.tab_extents if te.tab_id > 0)
+        idx = next((i for i, te in enumerate(extents) if te.tab_id == before), len(extents))
+        s = self.screen
+        s.cursor.fg, s.cursor.bg = self.active_fg, self.active_bg
+        s.cursor.bold, s.cursor.italic = False, False
+        if self.is_vertical:
+            prev_end = extents[idx - 1].y.end if idx else -1
+            next_start = extents[idx].y.start if idx < len(extents) else s.lines
+            # Prefer a blank line next to the insertion point, so no tab title is hidden
+            occupied = {y for te in self.tab_extents for y in range(te.y.start, te.y.end + 1)}
+            candidates = range(next_start - 1, prev_end, -1) if idx == 0 else range(prev_end + 1, next_start)
+            if (gap := next((y for y in candidates if y not in occupied and 0 <= y < s.lines), None)) is None:
+                # Crowded tab bar, mark just the first cell of the tab after the insertion point
+                s.cursor.x, s.cursor.y = 0, max(0, min(s.lines - 1, next_start if idx < len(extents) else prev_end + 1))
+                s.draw('▶')
+            else:
+                s.cursor.x, s.cursor.y = 0, gap
+                s.draw('━' * s.columns)
+        else:
+            coordinate = extents[idx].x.start if idx < len(extents) else (extents[-1].x.end + 1 if extents else 0)
+            s.cursor.x, s.cursor.y = min(s.columns - 1, coordinate), 0
+            s.draw('┃')
+        s.cursor.fg = s.cursor.bg = 0
 
     def align_with_factor(self, factor: int = 1) -> None:
         if not self.tab_extents:
             return
-        end = self.tab_extents[-1].cell_range[1]
+        end = self.tab_extents[-1].x.end
         if end < self.screen.columns - 1:
             shift = (self.screen.columns - end) // factor
             self.screen.cursor.x = 0
             self.screen.insert_characters(shift)
-            self.tab_extents = tuple(te.shifted(shift) for te in self.tab_extents)
+            self.tab_extents = tuple(te.shifted(x=shift) for te in self.tab_extents)
 
     def destroy(self) -> None:
         self.screen.reset_callbacks()
         del self.screen
 
-    def tab_id_at(self, x: int) -> int:
+    def tab_id_at(self, x: int, y: int) -> int:
         if self.laid_out_once:
-            x = (x - self.window_geometry.left) // self.cell_width
+            g = self.window_geometry
+            if not (g.left <= x < g.right and g.top <= y < g.bottom):
+                return 0
+            x = (x - g.left) // self.cell_width
+            y = (y - g.top) // self.cell_height
             for te in self.tab_extents:
-                if te.cell_range.start <= x <= te.cell_range.end:
+                if te.contains(x, y):
                     return te.tab_id
         return 0
+
+    def drag_axis_coordinate(self, x: int, y: int) -> int:
+        return y if self.is_vertical else x
+
+    def _drop_spans(self, x: int, y: int) -> tuple[float, list[tuple[int, int, int]]]:
+        "The pointer position and the non-empty (tab_id, start, end) pixel spans of the tabs along the tab bar axis"
+        g = self.window_geometry
+        coordinate = y - g.top if self.is_vertical else x - g.left
+        cell_size = self.cell_height if self.is_vertical else self.cell_width
+        limit = self.screen.lines if self.is_vertical else self.screen.columns
+        extents = tuple(te.y if self.is_vertical else te.x for te in self.tab_extents if te.tab_id > 0)
+        ids = tuple(te.tab_id for te in self.tab_extents if te.tab_id > 0)
+        spans = []
+        for i, cells in enumerate(extents):
+            start, end = cells.start * cell_size, min(limit, cells.end + 1) * cell_size
+            # Some custom renderers include the next tab's first cell in their extent.
+            if i + 1 < len(extents):
+                end = min(end, extents[i + 1].start * cell_size)
+            if end > start:
+                spans.append((ids[i], start, end))
+        return coordinate, spans
+
+    def tab_insertion_target_at(self, x: int, y: int) -> int:
+        "The tab after the nearest insertion boundary, or zero to append."
+        if not self.laid_out_once:
+            return 0
+        coordinate, spans = self._drop_spans(x, y)
+        for tab_id, start, end in spans:
+            if coordinate < (start + end) / 2:
+                return tab_id
+        return 0
+
+    def window_drop_target_at(self, x: int, y: int) -> WindowDropTarget:
+        """The middle 80% of a tab accepts a window. Its outer 10% and gaps insert a new tab.
+        Called only for points inside the tab bar viewport, including its blank margins."""
+        if not self.laid_out_once:
+            return WindowDropTarget(before_tab_id=0)
+        coordinate, spans = self._drop_spans(x, y)
+        for i, (tab_id, start, end) in enumerate(spans):
+            if coordinate < start + (end - start) * 0.1:
+                return WindowDropTarget(before_tab_id=tab_id)
+            if coordinate < end - (end - start) * 0.1:
+                return WindowDropTarget(tab_id=tab_id)
+            if coordinate < end:
+                return WindowDropTarget(before_tab_id=spans[i + 1][0] if i + 1 < len(spans) else 0)
+        return WindowDropTarget(before_tab_id=0)

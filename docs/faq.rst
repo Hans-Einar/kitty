@@ -36,78 +36,6 @@ within a fixed width across all faces of the font, otherwise they aren't really
 monospaced.
 
 
-Using a color theme with a background color does not work well in vim?
------------------------------------------------------------------------
-
-First, be sure to `use a color scheme in vim <https://github.com/kovidgoyal/kitty/discussions/8196#discussioncomment-11739991>`__
-instead of relying on the terminal theme. Otherwise, background and text selection colours
-may be difficult to read.
-
-Sadly, vim has very poor out-of-the-box detection for modern terminal features.
-Furthermore, it `recently broke detection even more <https://github.com/vim/vim/issues/11729>`__.
-It kind of, but not really, supports terminfo, except it overrides it with its own hard-coded
-values when it feels like it. Worst of all, it has no ability to detect modern
-features not present in terminfo, at all, even security sensitive ones like
-bracketed paste.
-
-Thankfully, probably as a consequence of this lack of detection, vim allows users to
-configure these low level details. So, to make vim work well with any modern
-terminal, including kitty, add the following to your :file:`~/.vimrc`.
-
-.. code-block:: vim
-
-    " Mouse support
-    set mouse=a
-    set ttymouse=sgr
-    set balloonevalterm
-    " Styled and colored underline support
-    let &t_AU = "\e[58:5:%dm"
-    let &t_8u = "\e[58:2:%lu:%lu:%lum"
-    let &t_Us = "\e[4:2m"
-    let &t_Cs = "\e[4:3m"
-    let &t_ds = "\e[4:4m"
-    let &t_Ds = "\e[4:5m"
-    let &t_Ce = "\e[4:0m"
-    " Strikethrough
-    let &t_Ts = "\e[9m"
-    let &t_Te = "\e[29m"
-    " Truecolor support
-    let &t_8f = "\e[38:2:%lu:%lu:%lum"
-    let &t_8b = "\e[48:2:%lu:%lu:%lum"
-    let &t_RF = "\e]10;?\e\\"
-    let &t_RB = "\e]11;?\e\\"
-    " Bracketed paste
-    let &t_BE = "\e[?2004h"
-    let &t_BD = "\e[?2004l"
-    let &t_PS = "\e[200~"
-    let &t_PE = "\e[201~"
-    " Cursor control
-    let &t_RC = "\e[?12$p"
-    let &t_SH = "\e[%d q"
-    let &t_RS = "\eP$q q\e\\"
-    let &t_SI = "\e[5 q"
-    let &t_SR = "\e[3 q"
-    let &t_EI = "\e[1 q"
-    let &t_VS = "\e[?12l"
-    " Focus tracking
-    let &t_fe = "\e[?1004h"
-    let &t_fd = "\e[?1004l"
-    execute "set <FocusGained>=\<Esc>[I"
-    execute "set <FocusLost>=\<Esc>[O"
-    " Window title
-    let &t_ST = "\e[22;2t"
-    let &t_RT = "\e[23;2t"
-
-    " vim hardcodes background color erase even if the terminfo file does
-    " not contain bce. This causes incorrect background rendering when
-    " using a color theme with a background color in terminals such as
-    " kitty that do not support background color erase.
-    let &t_ut=''
-
-These settings must be placed **before** setting the ``colorscheme``. It is
-also important that the value of the vim ``term`` variable is not changed
-after these settings.
-
 I get errors about the terminal being unknown or opening the terminal failing or functional keys like arrow keys don't work?
 -------------------------------------------------------------------------------------------------------------------------------
 
@@ -206,30 +134,39 @@ remote control command, for details, see :ref:`at-set-colors`.
 To change colors when SSHing into a remote host, use the :opt:`color_scheme
 <kitten-ssh.color_scheme>` setting for the :doc:`ssh kitten <kittens/ssh>`.
 
-Additionally, You can use the
-`OSC terminal escape codes <https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands>`__
-to set colors. Examples of using OSC escape codes to set colors::
+Additionally, you can use the escape code described in :doc:`color-stack`
+to set colors in a single window.
+Examples of using OSC escape codes to set colors::
 
     Change the default foreground color:
-    printf '\x1b]10;#ff0000\x1b\\'
+    printf '\x1b]21;foreground=#ff0000\x1b\\'
     Change the default background color:
-    printf '\x1b]11;blue\x1b\\'
+    printf '\x1b]21;background=blue\x1b\\'
     Change the cursor color:
-    printf '\x1b]12;blue\x1b\\'
+    printf '\x1b]21;cursor=blue\x1b\\'
     Change the selection background color:
-    printf '\x1b]17;blue\x1b\\'
+    printf '\x1b]21;selection_background=blue\x1b\\'
     Change the selection foreground color:
-    printf '\x1b]19;blue\x1b\\'
+    printf '\x1b]21;selection_foreground=blue\x1b\\'
     Change the nth color (0 - 255):
-    printf '\x1b]4;n;green\x1b\\'
+    printf '\x1b]21;n=green\x1b\\'
 
-You can use various syntaxes/names for color specifications in the above
-examples. See `XParseColor <https://linux.die.net/man/3/xparsecolor>`__
-for full details.
+See :doc:`color-stack` for details on the syntax for specifying colors and
+how to query current colors.
 
-If a ``?`` is given rather than a color specification, kitty will respond
-with the current value for the specified color.
 
+Why is there padding between the text area and the window border?
+------------------------------------------------------------------
+
+Terminal screens are a grid of fixed size cells. When the window size is
+not an exact multiple of the cell size, there is some leftover space that
+appears as padding. Additionally you can add your own padding with
+:opt:`window_padding_width`. This padding can be particularly noticeable when
+using TUI programs that have a background color different from the terminal
+background color. In such cases either change their background color to match
+the terminal or more correctly, open a bug report against such programs and ask
+them to :doc:`change the terminal default background color <color-stack>`
+using OSC escape codes when starting and restore it when quitting to have it work automatically.
 
 How do I specify command line options for kitty on macOS?
 ---------------------------------------------------------------
@@ -283,9 +220,9 @@ fonts to be freely resizable, so it does not support bitmapped fonts.
    symbols, so to force kitty to use the pure NERD font for NERD symbols,
    add the following line to :file:`kitty.conf`::
 
-        # Nerd Fonts v3.3.0
+        # Nerd Fonts v3.4.0
 
-        symbol_map U+e000-U+e00a,U+ea60-U+ebeb,U+e0a0-U+e0c8,U+e0ca,U+e0cc-U+e0d7,U+e200-U+e2a9,U+e300-U+e3e3,U+e5fa-U+e6b7,U+e700-U+e8ef,U+ed00-U+efc1,U+f000-U+f2ff,U+f000-U+f2e0,U+f300-U+f381,U+f400-U+f533,U+f0001-U+f1af0 Symbols Nerd Font Mono
+        symbol_map U+e000-U+e00a,U+e0a0-U+e0a2,U+e0a3,U+e0b0-U+e0b3,U+e0b4-U+e0c8,U+e0ca,U+e0cc-U+e0d7,U+e200-U+e2a9,U+e300-U+e3e3,U+e5fa-U+e6b7,U+e700-U+e8ef,U+ea60-U+ec1e,U+ed00-U+efce,U+f000-U+f2ff,U+f300-U+f381,U+f400-U+f533,U+f0001-U+f1af0 Symbols Nerd Font Mono
 
    Those Unicode symbols not in the `Unicode private use areas
    <https://en.wikipedia.org/wiki/Private_Use_Areas>`__ are
@@ -389,6 +326,10 @@ many alternate icons available, click on an icon to visit its homepage:
    :target: https://github.com/igrmk/twiskers
    :width: 256
 
+.. image:: https://github.com/mtklr/kitty-nyan-icon/raw/main/kitty-nyan.svg
+   :target: https://github.com/mtklr/kitty-nyan-icon
+   :width: 256
+
 You can put :file:`kitty.app.icns` (macOS only) or :file:`kitty.app.png` in the
 :ref:`kitty configuration directory <confloc>`, and this icon will be applied
 automatically at startup. On X11 and Wayland, this will set the icon for kitty windows.
@@ -416,20 +357,22 @@ also set it with the following command:
 
 You can also change the icon manually by following the steps:
 
-.. tab:: macOS
+.. tab-set::
 
-    #. Find :file:`kitty.app` in the Applications folder, select it and press :kbd:`⌘+I`
-    #. Drag :file:`kitty.icns` onto the application icon in the kitty info pane
-    #. Delete the icon cache and restart Dock::
+   .. tab-item:: macOS
 
-        rm /var/folders/*/*/*/com.apple.dock.iconcache; killall Dock
+      #. Find :file:`kitty.app` in the Applications folder, select it and press :kbd:`⌘+I`
+      #. Drag :file:`kitty.icns` onto the application icon in the kitty info pane
+      #. Delete the icon cache and restart Dock::
 
-.. tab:: Linux
+            rm /var/folders/*/*/*/com.apple.dock.iconcache; killall Dock
 
-   #. Copy :file:`kitty.desktop` from the installation location (usually
-      :file:`/usr/share/applications` to :file:`~/.local/share/applications`
-   #. Edit the copied desktop file changing the ``Icon`` line to have
-      the absolute path to your desired icon.
+   .. tab-item:: Linux
+
+      #. Copy :file:`kitty.desktop` from the installation location (usually
+         :file:`/usr/share/applications` to :file:`~/.local/share/applications`
+      #. Edit the copied desktop file changing the ``Icon`` line to have
+         the absolute path to your desired icon.
 
 
 How do I map key presses in kitty to different keys in the terminal program?
@@ -479,6 +422,16 @@ rc files are either also defined system wide or via the :opt:`env` directive in
 related to localization, such as :envvar:`LANG`, ``LC_*`` and loading of
 configuration files such as ``XDG_*``, :envvar:`KITTY_CONFIG_DIRECTORY` and,
 most importantly, ``PATH`` to locate binaries.
+
+The simplest way to fix this is to have kitty load the environment variables
+from your shell configuration at startup using the :opt:`env` directive,
+adding the following to :file:`kitty.conf`::
+
+    env read_from_shell=PATH LANG LC_* XDG_* EDITOR VISUAL
+
+This works for POSIX compliant shells and the fish shell. Note that it
+does add significantly to kitty startup time, so use only if really necessary.
+This feature was added in version ``0.43.2``.
 
 To see the environment variables that kitty sees, you can add the following
 mapping to :file:`kitty.conf`::
@@ -558,6 +511,79 @@ The remaining used memory can be investigated using valgrind again, and it will
 come from arenas in the GPU drivers and the per thread arenas glibc's malloc
 maintains. These too allocate memory in large blocks and don't release it back
 to the OS immediately.
+
+
+Using a color theme with a background color does not work well in vim?
+-----------------------------------------------------------------------
+
+First, be sure to `use a color scheme in vim <https://github.com/kovidgoyal/kitty/discussions/8196#discussioncomment-11739991>`__
+instead of relying on the terminal theme. Otherwise, background and text selection colours
+may be difficult to read.
+
+Sadly, vim has very poor out-of-the-box detection for modern terminal features.
+Furthermore, it `recently broke detection even more <https://github.com/vim/vim/issues/11729>`__.
+It kind of, but not really, supports terminfo, except it overrides it with its own hard-coded
+values when it feels like it. Worst of all, it has no ability to detect modern
+features not present in terminfo, at all, even security sensitive ones like
+bracketed paste.
+
+Thankfully, probably as a consequence of this lack of detection, vim allows users to
+configure these low level details. So, to make vim work well with any modern
+terminal, including kitty, add the following to your :file:`~/.vimrc`.
+
+.. code-block:: vim
+
+    " Mouse support
+    set mouse=a
+    set ttymouse=sgr
+    set balloonevalterm
+    " Styled and colored underline support
+    let &t_AU = "\e[58:5:%dm"
+    let &t_8u = "\e[58:2:%lu:%lu:%lum"
+    let &t_Us = "\e[4:2m"
+    let &t_Cs = "\e[4:3m"
+    let &t_ds = "\e[4:4m"
+    let &t_Ds = "\e[4:5m"
+    let &t_Ce = "\e[4:0m"
+    " Strikethrough
+    let &t_Ts = "\e[9m"
+    let &t_Te = "\e[29m"
+    " Truecolor support
+    let &t_8f = "\e[38:2:%lu:%lu:%lum"
+    let &t_8b = "\e[48:2:%lu:%lu:%lum"
+    let &t_RF = "\e]10;?\e\\"
+    let &t_RB = "\e]11;?\e\\"
+    " Bracketed paste
+    let &t_BE = "\e[?2004h"
+    let &t_BD = "\e[?2004l"
+    let &t_PS = "\e[200~"
+    let &t_PE = "\e[201~"
+    " Cursor control
+    let &t_RC = "\e[?12$p"
+    let &t_SH = "\e[%d q"
+    let &t_RS = "\eP$q q\e\\"
+    let &t_SI = "\e[5 q"
+    let &t_SR = "\e[3 q"
+    let &t_EI = "\e[1 q"
+    let &t_VS = "\e[?12l"
+    " Focus tracking
+    let &t_fe = "\e[?1004h"
+    let &t_fd = "\e[?1004l"
+    execute "set <FocusGained>=\<Esc>[I"
+    execute "set <FocusLost>=\<Esc>[O"
+    " Window title
+    let &t_ST = "\e[22;2t"
+    let &t_RT = "\e[23;2t"
+
+    " vim hardcodes background color erase even if the terminfo file does
+    " not contain bce. This causes incorrect background rendering when
+    " using a color theme with a background color in terminals such as
+    " kitty that do not support background color erase.
+    let &t_ut=''
+
+These settings must be placed **before** setting the ``colorscheme``. It is
+also important that the value of the vim ``term`` variable is not changed
+after these settings.
 
 
 Why does kitty sometimes start slowly on my Linux system?

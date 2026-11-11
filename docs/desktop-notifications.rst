@@ -25,7 +25,7 @@ the set :code:`a-zA-Z0-9-_/\+.,(){}[]*&^%$#@!`~`. The payload must be
 interpreted based on the metadata section. The two semi-colons *must* always be
 present even when no metadata is present.
 
-Before going into details, lets see how one can display a simple, single line
+Before going into details, let's see how one can display a simple, single line
 notification from a shell script::
 
     printf '\x1b]99;;Hello world\x1b\\'
@@ -191,7 +191,7 @@ treat these as being two unique *unidentified* notifications.
 
 To close a previous notification, send::
 
-    <OSC> i=<notification id> : p=close ; <terminator>
+    <OSC> 99 ; i=<notification id> : p=close ; <terminator>
 
 This will close a previous notification with the specified id. If no such
 notification exists (perhaps because it was already closed or it was activated)

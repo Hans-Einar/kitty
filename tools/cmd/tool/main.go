@@ -6,11 +6,14 @@ import (
 	"fmt"
 
 	"github.com/kovidgoyal/kitty/kittens/ask"
+	"github.com/kovidgoyal/kitty/kittens/broadcast"
 	"github.com/kovidgoyal/kitty/kittens/choose_files"
 	"github.com/kovidgoyal/kitty/kittens/choose_fonts"
 	"github.com/kovidgoyal/kitty/kittens/clipboard"
+	"github.com/kovidgoyal/kitty/kittens/command_palette"
 	"github.com/kovidgoyal/kitty/kittens/desktop_ui"
 	"github.com/kovidgoyal/kitty/kittens/diff"
+	"github.com/kovidgoyal/kitty/kittens/dnd"
 	"github.com/kovidgoyal/kitty/kittens/hints"
 	"github.com/kovidgoyal/kitty/kittens/hyperlinked_grep"
 	"github.com/kovidgoyal/kitty/kittens/icat"
@@ -18,6 +21,8 @@ import (
 	"github.com/kovidgoyal/kitty/kittens/panel"
 	"github.com/kovidgoyal/kitty/kittens/query_terminal"
 	"github.com/kovidgoyal/kitty/kittens/quick_access_terminal"
+	"github.com/kovidgoyal/kitty/kittens/remote_file"
+	"github.com/kovidgoyal/kitty/kittens/resize_window"
 	"github.com/kovidgoyal/kitty/kittens/show_key"
 	"github.com/kovidgoyal/kitty/kittens/ssh"
 	"github.com/kovidgoyal/kitty/kittens/themes"
@@ -35,6 +40,7 @@ import (
 	"github.com/kovidgoyal/kitty/tools/cmd/update_self"
 	"github.com/kovidgoyal/kitty/tools/tui"
 	"github.com/kovidgoyal/kitty/tools/utils/images"
+	"github.com/kovidgoyal/kitty/tools/watch"
 )
 
 var _ = fmt.Print
@@ -51,6 +57,8 @@ func KittyToolEntryPoints(root *cli.Command) {
 	edit_in_kitty.EntryPoint(root)
 	// clipboard
 	clipboard.EntryPoint(root)
+	// dnd
+	dnd.EntryPoint(root)
 	// icat
 	icat.EntryPoint(root)
 	// ssh
@@ -61,6 +69,12 @@ func KittyToolEntryPoints(root *cli.Command) {
 	panel.EntryPoint(root)
 	// quick_access_terminal
 	quick_access_terminal.EntryPoint(root)
+	// resize_window
+	resize_window.EntryPoint(root)
+	// broadcast
+	broadcast.EntryPoint(root)
+	// remote_file
+	remote_file.EntryPoint(root)
 	// unicode_input
 	unicode_input.EntryPoint(root)
 	// show_key
@@ -97,6 +111,8 @@ func KittyToolEntryPoints(root *cli.Command) {
 	choose_fonts.EntryPoint(root)
 	// choose-files
 	choose_files.EntryPoint(root)
+	// command-palette
+	command_palette.EntryPoint(root)
 	// query-terminal
 	query_terminal.EntryPoint(root)
 	// __pytest__
@@ -128,7 +144,8 @@ func KittyToolEntryPoints(root *cli.Command) {
 			return confirm_and_run_exe(args)
 		},
 	})
-
+	// __watch_conf__
+	watch.EntryPoint(root)
 	// __convert_image__
 	images.ConvertEntryPoint(root)
 	// __atexit__

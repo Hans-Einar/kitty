@@ -11,7 +11,7 @@ Using terminal programs to provide Linux desktop components
 Power users of terminals on Linux also often like to use bare bones window
 managers instead of full fledged desktop environments. This kitten helps
 provide parts of the desktop environment that are missing from such setups,
-and does so using keyboard friendly, terminal first UI components. Some of its
+and does so using keyboard friendly, terminal first, UI components. Some of its
 features are:
 
 * Replace the typical File Open/Save dialogs used in GUI programs with the
@@ -71,7 +71,8 @@ provide implementations for some backends as well. Service discovery and
 configuring which backend to use happens via the :file:`xdg-desktop-portal`
 program, usually found at :file:`/usr/lib/xdg-desktop-portal`.
 
-It can be configured by files in :file:`~/.local/share/xdg-desktop-portal`. See
+It can be configured by files in :file:`$XDG_CONFIG_HOME/xdg-desktop-portal`,
+which defaults to :file:`~/.config/xdg-desktop-portal`. See
 `man portals.conf <https://man.archlinux.org/man/portals.conf.5>`__. The
 ``kitten desktop-ui enable-portal`` command takes care of the setup for you
 automatically. If you want to customize exactly which services to use this
@@ -108,7 +109,7 @@ returns a not found error, then some other backend is being used for settings.
 
 Read the ``portals.conf`` man page and run::
 
-    /usr/lib/xdg-desktop-portal -r v
+    /usr/lib/xdg-desktop-portal -r -v
 
 this will output a lot of debug information, which should tell you which
 backend is chosen for which service. Read the debug output carefully to
@@ -116,7 +117,7 @@ determine why the kitten is not being selected.
 
 If some GUI applications are not using the choose-files kitten for their file
 select dialogs, then make sure the environment variables mentioned above are
-set, you can also try running the the GUI application with them set explicitly,
+set, you can also try running the GUI application with them set explicitly,
 as::
 
     QT_QPA_PLATFORMTHEME=xdgdesktopportal GTK_USE_PORTAL=1 my-gui-app
@@ -124,3 +125,18 @@ as::
 Note that not all applications use portals, so if some particular application
 is failing to use the portal but others work, report the issue to that
 applications' developers.
+
+.. note::
+
+   File chooser integration requires your window manager to support
+   :ref:`panels <panel_compat>` so check the compatibility table.
+
+Configuration
+------------------------
+
+You can configure various aspects of the kitten's operation by creating a
+:file:`desktop-ui-portal.conf` in your :ref:`kitty config folder <confloc>`.
+See below for the supported configuration directives.
+
+
+.. include:: /generated/conf-kitten-desktop_ui.rst

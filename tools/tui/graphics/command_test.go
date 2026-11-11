@@ -5,11 +5,12 @@ package graphics
 import (
 	"bytes"
 	"compress/zlib"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/emmansun/base64"
 
 	"github.com/google/go-cmp/cmp"
 	"golang.org/x/exp/rand"
@@ -91,6 +92,18 @@ func TestGraphicsCommandSerialization(t *testing.T) {
 	}
 	if diff := cmp.Diff(q.response_message, base64.RawStdEncoding.EncodeToString([]byte("abcd"))); diff != "" {
 		t.Fatalf("Failed to parse payload:\n%s", diff)
+	}
+
+	for _, x := range []struct {
+		f GRT_f
+		s string
+	}{{GRT_format_indexed, "f=8"}, {GRT_format_indexed_alpha, "f=16"}} {
+		gc = &GraphicsCommand{}
+		gc.SetFormat(x.f).SetDataWidth(2).SetDataHeight(1)
+		test_serialize("ab", x.s, "s=2", "v=1")
+		if q = from_full_apc_escape_code(gc.AsAPC(nil)); q.Format() != x.f {
+			t.Fatalf("Failed to parse format %s, got: %s", x.s, q.Format())
+		}
 	}
 
 	test_chunked_payload([]byte("abcd"))

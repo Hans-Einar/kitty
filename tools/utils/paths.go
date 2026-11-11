@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/unix"
 )
 
@@ -103,7 +103,7 @@ func ConfigDirForName(name string) (config_dir string) {
 		add(xh)
 	}
 	if dirs := os.Getenv("XDG_CONFIG_DIRS"); dirs != "" {
-		for _, candidate := range strings.Split(dirs, ":") {
+		for candidate := range strings.SplitSeq(dirs, ":") {
 			add(candidate)
 		}
 	}
@@ -329,4 +329,207 @@ func Commonpath(paths ...string) (longest_prefix string) {
 		longest_prefix = paths[0][:sz]
 	}
 	return
+}
+
+// RelativeIfUnder returns the path to 'target' relative to 'base' if and only if
+// target is inside base. It returns the relative path, a boolean indicating
+// whether target is inside base, and an error.
+//
+// If resolveSymlinks is true, both base and target are run through filepath.EvalSymlinks
+// before containment checks. If base == target the function returns "." and true.
+//
+// Notes:
+//   - This uses filepath.Rel and then checks for leading ".." components to determine
+//     whether the returned relative path escapes the base directory.
+//   - On Windows behaviour is consistent with filepath semantics.
+func RelativeIfUnder(base, target string, resolveSymlinks bool) (rel string, inside bool, err error) {
+	// Optionally resolve symlinks first
+	if resolveSymlinks {
+		if base, err = filepath.EvalSymlinks(base); err != nil {
+			return "", false, fmt.Errorf("resolving base symlinks: %w", err)
+		}
+		if target, err = filepath.EvalSymlinks(target); err != nil {
+			return "", false, fmt.Errorf("resolving target symlinks: %w", err)
+		}
+	}
+
+	// Make absolute and clean
+	if base, err = filepath.Abs(base); err != nil {
+		return "", false, fmt.Errorf("abs base: %w", err)
+	}
+	if target, err = filepath.Abs(target); err != nil {
+		return "", false, fmt.Errorf("abs target: %w", err)
+	}
+
+	// On Windows the volume (drive letter) must match. If they don't, the path is not inside.
+	if runtime.GOOS == "windows" {
+		if !strings.EqualFold(filepath.VolumeName(base), filepath.VolumeName(target)) {
+			return "", false, nil
+		}
+	}
+
+	// Get the relative path from base to target
+	rel, err = filepath.Rel(base, target)
+	if err != nil {
+		return "", false, fmt.Errorf("computing relative path: %w", err)
+	}
+
+	// If rel begins with ".." (or is ".."), then target is outside base.
+	// Use os.PathSeparator to be portable.
+	up := ".." + string(os.PathSeparator)
+	if rel == ".." || strings.HasPrefix(rel, up) {
+		return "", false, nil
+	}
+
+	// If the returned rel is empty (shouldn't normally happen), normalize to "."
+	if rel == "" {
+		rel = "."
+	}
+	return rel, true, nil
+}
+
+func volnamelen(path string) int {
+	return len(filepath.VolumeName(path))
+}
+
+func EvalSymlinksThatExist(path string) (string, error) {
+	volLen := volnamelen(path)
+	pathSeparator := string(os.PathSeparator)
+
+	if volLen < len(path) && os.IsPathSeparator(path[volLen]) {
+		volLen++
+	}
+	vol := path[:volLen]
+	dest := vol
+	linksWalked := 0
+	for start, end := volLen, volLen; start < len(path); start = end {
+		for start < len(path) && os.IsPathSeparator(path[start]) {
+			start++
+		}
+		end = start
+		for end < len(path) && !os.IsPathSeparator(path[end]) {
+			end++
+		}
+
+		// On Windows, "." can be a symlink.
+		// We look it up, and use the value if it is absolute.
+		// If not, we just return ".".
+		isWindowsDot := runtime.GOOS == "windows" && path[volnamelen(path):] == "."
+
+		// The next path component is in path[start:end].
+		if end == start {
+			// No more path components.
+			break
+		} else if path[start:end] == "." && !isWindowsDot {
+			// Ignore path component ".".
+			continue
+		} else if path[start:end] == ".." {
+			// Back up to previous component if possible.
+			// Note that volLen includes any leading slash.
+
+			// Set r to the index of the last slash in dest,
+			// after the volume.
+			var r int
+			for r = len(dest) - 1; r >= volLen; r-- {
+				if os.IsPathSeparator(dest[r]) {
+					break
+				}
+			}
+			if r < volLen || dest[r+1:] == ".." {
+				// Either path has no slashes
+				// (it's empty or just "C:")
+				// or it ends in a ".." we had to keep.
+				// Either way, keep this "..".
+				if len(dest) > volLen {
+					dest += pathSeparator
+				}
+				dest += ".."
+			} else {
+				// Discard everything since the last slash.
+				dest = dest[:r]
+			}
+			continue
+		}
+
+		// Ordinary path component. Add it to result.
+
+		if len(dest) > volnamelen(dest) && !os.IsPathSeparator(dest[len(dest)-1]) {
+			dest += pathSeparator
+		}
+
+		dest += path[start:end]
+
+		// Resolve symlink.
+
+		fi, err := os.Lstat(dest)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if end < len(path) {
+					dest += path[end:]
+				}
+				return filepath.Clean(dest), nil
+			}
+			return "", err
+		}
+
+		if fi.Mode()&fs.ModeSymlink == 0 {
+			if !fi.Mode().IsDir() && end < len(path) {
+				return "", fmt.Errorf("%s is not a directory while resolving symlinks in %s", dest, path)
+			}
+			continue
+		}
+
+		// Found symlink.
+
+		linksWalked++
+		if linksWalked > 255 {
+			return "", fmt.Errorf("EvalSymlinksThatExist: too many symlinks in %s", path)
+		}
+
+		link, err := os.Readlink(dest)
+		if err != nil {
+			return "", err
+		}
+
+		if isWindowsDot && !filepath.IsAbs(link) {
+			// On Windows, if "." is a relative symlink,
+			// just return ".".
+			break
+		}
+
+		path = link + path[end:]
+
+		v := volnamelen(link)
+		if v > 0 {
+			// Symlink to drive name is an absolute path.
+			if v < len(link) && os.IsPathSeparator(link[v]) {
+				v++
+			}
+			vol = link[:v]
+			dest = vol
+			end = len(vol)
+		} else if len(link) > 0 && os.IsPathSeparator(link[0]) {
+			// Symlink to absolute path.
+			dest = link[:1]
+			end = 1
+			vol = link[:1]
+			volLen = 1
+		} else {
+			// Symlink to relative path; replace last
+			// path component in dest.
+			var r int
+			for r = len(dest) - 1; r >= volLen; r-- {
+				if os.IsPathSeparator(dest[r]) {
+					break
+				}
+			}
+			if r < volLen {
+				dest = vol
+			} else {
+				dest = dest[:r]
+			}
+			end = 0
+		}
+	}
+	return filepath.Clean(dest), nil
 }

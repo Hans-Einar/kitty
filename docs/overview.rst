@@ -33,6 +33,9 @@ frames-per-second. Press :sc:`edit_config_file` in kitty to open its fully
 commented sample config file in your text editor. For details see the
 :doc:`configuration docs <conf>`.
 
+You can quickly browse all available mappable actions by pressing
+:sc:`command_palette`, see :doc:`kittens/command-palette` for details.
+
 .. toctree::
    :hidden:
 
@@ -96,11 +99,15 @@ used to create programs that leverage kitty's powerful features, for example,
 You can :doc:`create your own kittens to scratch your own itches
 <kittens/custom>`.
 
-For a list of all the builtin kittens, :ref:`see here <kittens>`.
+For a list of all the builtin kittens, run ``kitten`` in kitty, or to browse
+some of the more prominent ones, see :ref:`see here <kittens>`.
 
 Additionally, you can use the :ref:`watchers <Watchers>` framework
 to create Python scripts that run in response to various events such as windows
 being resized, closing, having their titles changed, etc.
+
+Finally, there is remote control which allows you to control kitty from
+anywhere, even across a network! See below for more about remote control.
 
 .. toctree::
    :hidden:
@@ -173,6 +180,28 @@ All these actions can be customized in :file:`kitty.conf` as described
 You can also customize what happens when clicking on :term:`hyperlinks` in
 kitty, having it open files in your editor, download remote files, open things
 in your browser, etc. For details, see :doc:`here <open_actions>`.
+
+Additionally, various bits of the kitty UI itself work with the mouse. You can
+drag and drop tabs in the tab bar to re-order them or move them from one OS
+Window to another, or even pop them out into a new OS Window. A tab containing a
+single window can also be dropped into the content area of another tab to insert
+its window at the highlighted edge.
+
+Dragging a tab in the tab bar shows an insertion marker at the position it
+will be dropped at, keeping the other tabs in place during the drag. When
+dragging a tab containing a single window, hover over another tab for 0.6
+seconds to switch to it, then keep dragging into its content area to choose a
+split position for the window before releasing the mouse.
+
+When dragging a window, hovering over the middle of a tab also switches to it,
+and dropping the window there moves it into that tab. The outer 10% at either
+end of a tab, the gaps between tabs and the ends of the tab bar show an
+insertion marker instead. Dropping a window there puts it into a new tab at
+that position.
+
+You can drag window borders to resize windows. You can double click on empty regions
+of the tab bar to create new tabs or double click on an existing tab to rename
+it.
 
 .. toctree::
    :hidden:

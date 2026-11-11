@@ -12,12 +12,9 @@ from kitty.fast_data_types import CTFace, coretext_all_fonts
 from kitty.typing_compat import CoreTextFont
 from kitty.utils import log_error
 
-from . import Descriptor, DescriptorVar, ListedFont, Score, Scorer, VariableData, family_name_to_key
+from . import Descriptor, ListedFont, Score, Scorer, VariableData, family_name_to_key
 
-attr_map = {(False, False): 'font_family',
-            (True, False): 'bold_font',
-            (False, True): 'italic_font',
-            (True, True): 'bold_italic_font'}
+attr_map = {(False, False): 'font_family', (True, False): 'bold_font', (False, True): 'italic_font', (True, True): 'bold_italic_font'}
 
 
 FontMap = dict[str, dict[str, list[CoreTextFont]]]
@@ -49,6 +46,11 @@ def create_font_map(all_fonts: Iterable[CoreTextFont]) -> FontMap:
     return ans
 
 
+def clear_caches() -> None:
+    all_fonts_map.cache_clear()
+    weight_range_for_family.cache_clear()
+
+
 @lru_cache(maxsize=2)
 def all_fonts_map(monospaced: bool = True) -> FontMap:
     return create_font_map(coretext_all_fonts(monospaced))
@@ -69,8 +71,15 @@ def list_fonts() -> Generator[ListedFont, None, None]:
             fn = fd['display_name']
             if not fn:
                 fn = f'{f} {fd["style"]}'.strip()
-            yield {'family': f, 'full_name': fn, 'postscript_name': fd['postscript_name'] or '', 'is_monospace': fd['monospace'],
-                   'is_variable': is_variable(fd), 'descriptor': fd, 'style': fd['style']}
+            yield {
+                'family': f,
+                'full_name': fn,
+                'postscript_name': fd['postscript_name'] or '',
+                'is_monospace': fd['monospace'],
+                'is_variable': is_variable(fd),
+                'descriptor': fd,
+                'style': fd['style'],
+            }
 
 
 class WeightRange(NamedTuple):
@@ -82,6 +91,7 @@ class WeightRange(NamedTuple):
     @property
     def is_valid(self) -> bool:
         return self.minimum != wr.minimum and self.maximum != wr.maximum and self.medium != wr.medium and self.bold != wr.bold
+
 
 wr = WeightRange()
 
@@ -108,7 +118,7 @@ def weight_range_for_family(family: str) -> WeightRange:
     return WeightRange(mini, maxi, medium, bold)
 
 
-class CTScorer(Scorer):
+class CTScorer(Scorer[CoreTextFont]):
     weight_range: WeightRange | None = None
 
     def score(self, candidate: Descriptor) -> Score:
@@ -125,7 +135,7 @@ class CTScorer(Scorer):
         else:
             anchor = self.weight_range.bold if self.bold else self.weight_range.medium
             bold_score = abs(bold_score - anchor)
-        italic_score = candidate['slant'] # -1 to 1 with 0 being upright < 0 being backward slant, abs(slant) == 1 implies 30 deg rotation
+        italic_score = candidate['slant']  # -1 to 1 with 0 being upright < 0 being backward slant, abs(slant) == 1 implies 30 deg rotation
         if self.italic:
             if italic_score < 0:
                 italic_score = 2.0
@@ -135,7 +145,7 @@ class CTScorer(Scorer):
         is_regular_width = not candidate['expanded'] and not candidate['condensed']
         return Score(variable_score, bold_score + italic_score, monospace_match, 0 if is_regular_width else 1)
 
-    def sorted_candidates(self, candidates: Sequence[DescriptorVar], dump: bool = False) -> list[DescriptorVar]:
+    def sorted_candidates(self, candidates: Sequence[CoreTextFont], dump: bool = False) -> list[CoreTextFont]:
         self.weight_range = None
         families = {x['family'] for x in candidates}
         if len(families) == 1:
@@ -149,8 +159,9 @@ class CTScorer(Scorer):
                 print(self.weight_range)
             for x in candidates:
                 assert x['descriptor_type'] == 'core_text'
-                print(CTFace(descriptor=x).postscript_name(),
-                      f'bold={x["bold"]}', f'italic={x["italic"]}', f'weight={x["weight"]:.2f}', f'slant={x["slant"]:.2f}')
+                print(
+                    CTFace(descriptor=x).postscript_name(), f'bold={x["bold"]}', f'italic={x["italic"]}', f'weight={x["weight"]:.2f}', f'slant={x["slant"]:.2f}'
+                )
                 print(' ', self.score(x))
             print()
         return candidates
@@ -167,8 +178,7 @@ def find_last_resort_text_font(bold: bool = False, italic: bool = False, monospa
 
 
 def find_best_match(
-    family: str, bold: bool = False, italic: bool = False, monospaced: bool = True, ignore_face: CoreTextFont | None = None,
-    prefer_variable: bool = False
+    family: str, bold: bool = False, italic: bool = False, monospaced: bool = True, ignore_face: CoreTextFont | None = None, prefer_variable: bool = False
 ) -> CoreTextFont:
     q = family_name_to_key(family)
     font_map = all_fonts_map(monospaced)
@@ -190,6 +200,7 @@ def find_best_match(
         possible = candidates[0]
         if possible != ignore_face:
             from .common import find_medium_variant
+
             return find_medium_variant(possible)
 
     # Let CoreText choose the font if the family exists, otherwise
@@ -219,6 +230,7 @@ def prune_family_group(g: list[ListedFont]) -> list[ListedFont]:
     variable_paths = {descriptor(f)['path']: False for f in g if f['is_variable']}
     if not variable_paths:
         return g
+
     def is_ok(d: CoreTextFont) -> bool:
         if d['path'] not in variable_paths:
             return True
@@ -226,6 +238,7 @@ def prune_family_group(g: list[ListedFont]) -> list[ListedFont]:
             variable_paths[d['path']] = True
             return True
         return False
+
     return [x for x in g if is_ok(descriptor(x))]
 
 

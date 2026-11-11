@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -184,7 +185,7 @@ func (self *ResponseData) UnmarshalJSON(data []byte) error {
 
 type Response struct {
 	Ok        bool         `json:"ok"`
-	Data      ResponseData `json:"data,omitempty"`
+	Data      ResponseData `json:"data"`
 	Error     string       `json:"error,omitempty"`
 	Traceback string       `json:"tb,omitempty"`
 }
@@ -339,6 +340,9 @@ func get_password(password string, password_file string, password_env string, us
 			}
 		} else {
 			var q []byte
+			if !filepath.IsAbs(password_file) {
+				password_file = filepath.Join(utils.ConfigDir(), password_file)
+			}
 			q, err = os.ReadFile(password_file)
 			if err == nil {
 				ans.is_set, ans.val = true, strings.TrimRight(string(q), " \n\t")

@@ -16,7 +16,8 @@ frames-per-second. See below for an overview of all customization possibilities.
 You can open the config file within |kitty| by pressing :sc:`edit_config_file`
 (:kbd:`⌘+,` on macOS). A :file:`kitty.conf` with commented default
 configurations and descriptions will be created if the file does not exist.
-You can reload the config file within |kitty| by pressing
+The configuration is automatically reloaded when modified, controlled by
+:opt:`auto_reload_config`. You can manually reload the config by pressing
 :sc:`reload_config_file` (:kbd:`⌃+⌘+,` on macOS) or sending |kitty| the
 ``SIGUSR1`` signal with ``kill -SIGUSR1 $KITTY_PID``. You can also display the
 current configuration by pressing :sc:`debug_config` (:kbd:`⌥+⌘+,` on macOS).
@@ -28,9 +29,9 @@ current configuration by pressing :sc:`debug_config` (:kbd:`⌥+⌘+,` on macOS)
 :option:`kitty --config` option or use the :envvar:`KITTY_CONFIG_DIRECTORY`
 environment variable. See :option:`kitty --config` for full details.
 
-**Comments** can be added to the config file as lines starting with the ``#``
-character. This works only if the ``#`` character is the first character in the
-line.
+**Comments** can be added to the config file as lines whose first non-whitespace
+character is ``#``. Trailing comments after configuration values are not
+generally supported.
 
 **Lines can be split** by starting the next line with the ``\`` character.
 All leading whitespace and the ``\`` character are removed.
@@ -60,10 +61,6 @@ by running a program using :code:`geninclude`. For example::
      # or program is supported, in any language. Remember to mark the script
      # file executable.
      geninclude dynamic.py
-
-
-.. note:: Syntax highlighting for :file:`kitty.conf` in vim is available via
-   `vim-kitty <https://github.com/fladson/vim-kitty>`__.
 
 
 .. include:: /generated/conf-kitty.rst
@@ -101,3 +98,4 @@ See the :doc:`list of all the things you can make |kitty| can do </actions>`.
    :hidden:
 
    actions
+   wide-gamut-colors

@@ -4,12 +4,13 @@ package at
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"image"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/emmansun/base64"
 
 	"github.com/kovidgoyal/kitty/tools/utils/images"
 )
@@ -27,30 +28,23 @@ func read_window_logo(io_data *rc_io_data, path string) (func(io_data *rc_io_dat
 		}, nil
 	}
 
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var image_data_stream io.Reader
-	image_data_stream = f
-	config, format, ierr := image.DecodeConfig(f)
-	if ierr != nil {
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
 		return nil, fmt.Errorf("%s is not a supported image format", path)
 	}
-	f.Seek(0, 0)
-
+	var image_data_stream io.Reader = bytes.NewReader(data)
 	if format != "png" {
-		f.Seek(0, 0)
-		img, _, err := image.Decode(f)
+		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
-			f.Close()
+			return nil, fmt.Errorf("failed to decode the image %s: %w", path, err)
 		}
-		f.Close()
 		b := bytes.Buffer{}
-		b.Grow(config.Height * config.Width * 4)
-		err = images.Encode(&b, img, "image/png")
-		if err != nil {
-			return nil, err
+		if err = images.Encode(&b, img, "image/png"); err != nil {
+			return nil, fmt.Errorf("failed to convert the image %s to PNG: %w", path, err)
 		}
 		image_data_stream = &b
 	}
@@ -75,4 +69,34 @@ func read_window_logo(io_data *rc_io_data, path string) (func(io_data *rc_io_dat
 		}
 		return false, nil
 	}, nil
+}
+
+func is_index_arg(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	start := 0
+	if s[0] == '+' || s[0] == '-' {
+		start = 1
+	}
+	if start >= len(s) {
+		return false
+	}
+	for _, c := range s[start:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func read_background_image(io_data *rc_io_data, path string) (func(io_data *rc_io_data) (bool, error), error) {
+	if is_index_arg(path) {
+		io_data.rc.Stream = false
+		return func(io_data *rc_io_data) (bool, error) {
+			set_payload_data(io_data, "index:"+path)
+			return true, nil
+		}, nil
+	}
+	return read_window_logo(io_data, path)
 }

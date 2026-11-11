@@ -3,7 +3,6 @@
 package clipboard
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/emmansun/base64"
 
 	"github.com/kovidgoyal/kitty/tools/tui/loop"
 	"github.com/kovidgoyal/kitty/tools/utils"
@@ -43,7 +44,7 @@ func (self *Input) has_mime_matching(predicate func(string) bool) bool {
 }
 
 func write_loop(inputs []*Input, opts *Options) (err error) {
-	lp, err := loop.New(loop.NoAlternateScreen, loop.NoRestoreColors, loop.NoMouseTracking, loop.NoInBandResizeNotifications)
+	lp, err := loop.NewForSimpleInteraction()
 	if err != nil {
 		return err
 	}
@@ -149,6 +150,8 @@ func write_loop(inputs []*Input, opts *Options) (err error) {
 				return fmt.Errorf("Could not write to clipboard as permission was denied")
 			case "EBUSY":
 				return fmt.Errorf("Could not write to clipboard, a temporary error occurred, try again later.")
+			case "EFBIG":
+				return fmt.Errorf("Could not write to clipboard as there is too much data, see the clipboard_max_size option in the terminal")
 			default:
 				return fmt.Errorf("Could not write to clipboard unknowns status returned from terminal: %#v", metadata["status"])
 			}

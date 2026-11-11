@@ -23,13 +23,14 @@ from .fast_data_types import (
     set_ignore_os_keyboard_processing,
 )
 from .options.types import Options
-from .options.utils import KeyboardMode, KeyDefinition, KeyMap
+from .options.utils import KeyboardMode, KeyDefinition, KeyFallbackType, KeyMap, KeyMapOptions
 from .typing_compat import ScreenType
 
 if TYPE_CHECKING:
     from .window import Window
 
 mod_mask = GLFW_MOD_ALT | GLFW_MOD_CONTROL | GLFW_MOD_SHIFT | GLFW_MOD_SUPER | GLFW_MOD_META | GLFW_MOD_HYPER
+_global_shortcut_options = KeyMapOptions(allow_fallback=(KeyFallbackType.shifted, KeyFallbackType.alternate))
 
 
 def keyboard_mode_name(screen: ScreenType) -> str:
@@ -42,14 +43,38 @@ def keyboard_mode_name(screen: ScreenType) -> str:
 def get_shortcut(keymap: KeyMap, ev: KeyEvent) -> list[KeyDefinition] | None:
     mods = ev.mods & mod_mask
     ans = keymap.get(SingleKey(mods, False, ev.key))
-    if ans is None and ev.shifted_key and mods & GLFW_MOD_SHIFT:
-        ans = keymap.get(SingleKey(mods & (~GLFW_MOD_SHIFT), False, ev.shifted_key))
+    if ans is None:
+        priority_map: dict[int, int] = {}
+        items: list[KeyDefinition] = []
+
+        def add(q: list[KeyDefinition] | None, ft: KeyFallbackType) -> None:
+            if q:
+                for d in q:
+                    prio = -1
+                    for i, x in enumerate(d.options.allow_fallback):
+                        if x is ft:
+                            prio = i
+                            break
+                    key = id(d)
+                    if -1 < prio < priority_map.get(key, 100000):
+                        if key not in priority_map:
+                            items.append(d)
+                        priority_map[key] = prio
+
+        if ev.shifted_key and mods & GLFW_MOD_SHIFT:
+            add(keymap.get(SingleKey(mods & (~GLFW_MOD_SHIFT), False, ev.shifted_key)), KeyFallbackType.shifted)
+        if ev.alternate_key and 127 < ev.key < 0xE000:
+            add(keymap.get(SingleKey(mods, False, ev.alternate_key)), KeyFallbackType.alternate)
+        if items:
+            ans = sorted(items, key=lambda x: priority_map[id(x)])
+
     if ans is None:
         ans = keymap.get(SingleKey(mods, True, ev.native_key))
     return ans
 
 
 def shortcut_matches(s: SingleKey, ev: KeyEvent) -> bool:
+    "used only for testing"
     mods = ev.mods & mod_mask
     smods = s.mods & mod_mask
     if s.is_native:
@@ -58,15 +83,17 @@ def shortcut_matches(s: SingleKey, ev: KeyEvent) -> bool:
         return True
     if ev.shifted_key and mods & GLFW_MOD_SHIFT and (mods & ~GLFW_MOD_SHIFT) == smods and ev.shifted_key == s.key:
         return True
+    if ev.alternate_key and 127 < ev.key < 0xE000 and ev.alternate_key == s.key and mods == smods:
+        return True
     return False
 
 
 class Mappings:
+    "Manage all keyboard mappings"
 
-    ' Manage all keyboard mappings '
-
-    def __init__(self, global_shortcuts:dict[str, SingleKey] | None = None, callback_on_mode_change: Callable[[], Any] = lambda: None) -> None:
+    def __init__(self, global_shortcuts: dict[str, SingleKey] | None = None, callback_on_mode_change: Callable[[], Any] = lambda: None) -> None:
         self.keyboard_mode_stack: list[KeyboardMode] = []
+        self.mode_timeout_timer_id: int | None = None
         self.update_keymap(global_shortcuts)
         self.callback_on_mode_change = callback_on_mode_change
 
@@ -77,7 +104,7 @@ class Mappings:
     def update_keymap(self, global_shortcuts: dict[str, SingleKey] | None = None) -> None:
         if global_shortcuts is None:
             global_shortcuts = self.set_cocoa_global_shortcuts(self.get_options()) if is_macos else {}
-        self.global_shortcuts_map: KeyMap = {v: [KeyDefinition(definition=k)] for k, v in global_shortcuts.items()}
+        self.global_shortcuts_map: KeyMap = {v: [KeyDefinition(definition=k, options=_global_shortcut_options)] for k, v in global_shortcuts.items()}
         self.global_shortcuts = global_shortcuts
         self.keyboard_modes = self.get_options().keyboard_modes.copy()
         km = self.keyboard_modes[''].keymap
@@ -87,6 +114,7 @@ class Mappings:
 
     def clear_keyboard_modes(self) -> None:
         had_mode = bool(self.keyboard_mode_stack)
+        self._cancel_mode_timeout()
         self.keyboard_mode_stack = []
         self.set_ignore_os_keyboard_processing(False)
         if had_mode:
@@ -95,6 +123,7 @@ class Mappings:
     def pop_keyboard_mode(self) -> bool:
         passthrough = True
         if self.keyboard_mode_stack:
+            self._cancel_mode_timeout()
             self.keyboard_mode_stack.pop()
             if not self.keyboard_mode_stack:
                 self.set_ignore_os_keyboard_processing(False)
@@ -110,11 +139,36 @@ class Mappings:
     def _push_keyboard_mode(self, mode: KeyboardMode) -> None:
         self.keyboard_mode_stack.append(mode)
         self.set_ignore_os_keyboard_processing(True)
+        self._start_mode_timeout(mode)
         self.callback_on_mode_change()
 
     def push_keyboard_mode(self, new_mode: str) -> None:
         mode = self.keyboard_modes[new_mode]
         self._push_keyboard_mode(mode)
+
+    def _start_mode_timeout(self, mode: KeyboardMode) -> None:
+        if mode.timeout > 0:
+            from .fast_data_types import add_timer
+
+            self._cancel_mode_timeout()
+            self.mode_timeout_timer_id = mode.timeout_timer_id = add_timer(self._on_mode_timeout, mode.timeout, False)
+
+    def _cancel_mode_timeout(self) -> None:
+        if self.mode_timeout_timer_id is not None:
+            from .fast_data_types import remove_timer
+
+            remove_timer(self.mode_timeout_timer_id)
+            self.mode_timeout_timer_id = None
+
+    def _on_mode_timeout(self, timer_id: int | None) -> None:
+        self.mode_timeout_timer_id = None
+        if self.keyboard_mode_stack:
+            self.pop_keyboard_mode()
+
+    def _get_effective_timeout(self, key_def: KeyDefinition) -> float:
+        if key_def.options.timeout is not None:
+            return key_def.options.timeout
+        return self.get_options().map_timeout
 
     def matching_key_actions(self, candidates: Iterable[KeyDefinition]) -> list[KeyDefinition]:
         w = self.get_active_window()
@@ -128,8 +182,9 @@ class Mappings:
                         is_applicable = True
                 except Exception:
                     self.clear_keyboard_modes()
-                    self.show_error(_('Invalid key mapping'), _(
-                        'The match expression {0} is not valid for {1}').format(x.options.when_focus_on, '--when-focus-on'))
+                    self.show_error(
+                        _('Invalid key mapping'), _('The match expression {0} is not valid for {1}').format(x.options.when_focus_on, '--when-focus-on')
+                    )
                     return []
             else:
                 is_applicable = True
@@ -143,10 +198,10 @@ class Mappings:
                 if not x.rest:
                     last_terminal_idx = i
             if last_terminal_idx > -1:
-                if last_terminal_idx == len(matches) -1:
+                if last_terminal_idx == len(matches) - 1:
                     matches = matches[last_terminal_idx:]
                 else:
-                    matches = matches[last_terminal_idx+1:]
+                    matches = matches[last_terminal_idx + 1 :]
             q = matches[-1].options.when_focus_on
             matches = [x for x in matches if x.options.when_focus_on == q]
         elif matches:
@@ -163,6 +218,13 @@ class Mappings:
                 # the shortcuts in the global menubar will have been bypassed so trigger them here
                 key_action = global_key_action
             else:
+                # On macOS copy_or_noop is mapped to Cmd+C by default and gets
+                # disabled when there is no copyable text so special case it
+                # and pass it on.
+                if is_macos and (w := get_boss().active_window):
+                    for action in global_key_action:
+                        if action.definition == 'copy_or_noop' and not w.screen.has_selection():
+                            return False
                 return True
         if key_action is None:
             if is_modifier_key(ev.key):
@@ -180,6 +242,9 @@ class Mappings:
                     return True
                 if mode.on_unknown == 'passthrough':
                     return False
+                if mode.on_unknown == 'passthrough_and_end':
+                    self.pop_keyboard_mode()
+                    return False
             if not self.pop_keyboard_mode():
                 self.ring_bell()
                 return True
@@ -192,6 +257,7 @@ class Mappings:
                         sm = KeyboardMode('__sequence__')
                         sm.on_action = 'end'
                         sm.sequence_keys = [ev]
+                        sm.timeout = self._get_effective_timeout(final_actions[0])
                         for fa in final_actions:
                             sm.keymap[fa.rest[0]].append(fa.shift_sequence_and_copy())
                         self._push_keyboard_mode(sm)
@@ -206,6 +272,7 @@ class Mappings:
                                     w.send_key_sequence(*mode.sequence_keys)
                             return consumed
                         mode.sequence_keys.append(ev)
+                        self._start_mode_timeout(mode)
                         self.debug_print('\n\x1b[35mKeyPress\x1b[m matched sequence prefix, ', end='')
                         mode.keymap.clear()
                         for fa in final_actions:
@@ -219,6 +286,8 @@ class Mappings:
                         self.callback_on_mode_change()
                         if not self.keyboard_mode_stack:
                             self.set_ignore_os_keyboard_processing(False)
+                elif not is_root_mode and mode_pos < len(self.keyboard_mode_stack) and self.keyboard_mode_stack[mode_pos] is mode:
+                    self._start_mode_timeout(mode)
                 return consumed
         return False
 
@@ -252,5 +321,7 @@ class Mappings:
 
     def set_cocoa_global_shortcuts(self, opts: Options) -> dict[str, SingleKey]:
         from .main import set_cocoa_global_shortcuts
+
         return set_cocoa_global_shortcuts(opts)
+
     # }}}

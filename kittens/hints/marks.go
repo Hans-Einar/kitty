@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dlclark/regexp2"
+	"github.com/dlclark/regexp2/syntax"
 	"github.com/seancfoley/ipaddress-go/ipaddr"
 
 	"github.com/kovidgoyal/kitty"
@@ -79,7 +80,7 @@ func process_escape_codes(text string) (ans string, hyperlinks []Mark) {
 			active_hyperlink_url = url
 			active_hyperlink_start_offset = start
 			if metadata != "" {
-				for _, entry := range strings.Split(metadata, ":") {
+				for entry := range strings.SplitSeq(metadata, ":") {
 					if strings.HasPrefix(entry, "id=") && len(entry) > 3 {
 						active_hyperlink_id = entry[3:]
 					}
@@ -137,17 +138,25 @@ func char_at(s string, i int) string {
 	return string(ans)
 }
 
+func char_before(s string, i int) string {
+	ans, _ := utf8.DecodeLastRuneInString(s[:i])
+	if ans == utf8.RuneError {
+		return ""
+	}
+	return string(ans)
+}
+
 func matching_remover(openers ...string) PostProcessorFunc {
 	return func(text string, s, e int) (int, int) {
 		if s < e && e <= len(text) {
 			before := char_at(text, s)
 			if slices.Index(openers, before) > -1 {
 				q := closing_bracket_for(before)
-				if e > 0 && char_at(text, e-1) == q {
-					s++
-					e--
+				if s+len(before) <= e-len(q) && char_before(text, e) == q {
+					s += len(before)
+					e -= len(q)
 				} else if char_at(text, e) == q {
-					s++
+					s += len(before)
 				}
 			}
 		}
@@ -174,15 +183,16 @@ var PostProcessorMap = sync.OnceValue(func() map[string]PostProcessorFunc {
 					e -= len(url) - idx
 				}
 			}
-			for e > 1 && is_punctuation(char_at(text, e)) { // remove trailing punctuation
+			for e > 1 && is_punctuation(char_before(text, e)) { // remove trailing punctuation
 				e--
 			}
 			// truncate url at closing bracket/quote
-			if s > 0 && e <= len(text) && closing_bracket_for(char_at(text, s-1)) != "" {
-				q := closing_bracket_for(char_at(text, s-1))
-				idx := strings.Index(text[s:], q)
-				if idx > 0 {
-					e = s + idx
+			if s > 0 && e <= len(text) {
+				if q := closing_bracket_for(char_before(text, s)); q != "" {
+					idx := strings.Index(text[s:], q)
+					if idx > 0 {
+						e = s + idx
+					}
 				}
 			}
 			// reStructuredText URLs
@@ -375,7 +385,7 @@ func functions_for(opts *Options) (pattern string, post_processors []PostProcess
 		// IPv4 with no validation
 		`((?:\d{1,3}\.){3}\d{1,3}` + "|" +
 			// IPv6 with no validation
-			`(?:[a-fA-F0-9]{0,4}:){2,7}[a-fA-F0-9]{1,4})`)
+			`(?:[a-fA-F0-9]{0,4}:){2,7}[a-fA-F0-9]{0,4})`)
 		post_processors = append(post_processors, PostProcessorMap()["ip"])
 	default:
 		pattern = opts.Regex
@@ -490,9 +500,56 @@ func find_all_matches(re *regexp2.Regexp, text string) (ans []Match, err error) 
 	return
 }
 
-func mark(r *regexp2.Regexp, post_processors []PostProcessorFunc, group_processors []GroupProcessorFunc, text string, opts *Options) (ans []Mark) {
+// Go's regexp only considers ASCII characters when matching \b whereas regexp2
+// uses Unicode word characters. So replace every non-ASCII rune with a single
+// ASCII byte that is a word character iff the rune is one, and return the byte
+// offsets of the runes in text, to map match offsets back.
+func ascii_word_proxy(text string) (proxy string, byte_offsets []int) {
+	if !slices.ContainsFunc(utils.UnsafeStringToBytes(text), func(b byte) bool { return b >= utf8.RuneSelf }) {
+		return text, nil
+	}
+	buf := make([]byte, 0, len(text))
+	byte_offsets = make([]int, 0, len(text)+1)
+	for i, r := range text {
+		byte_offsets = append(byte_offsets, i)
+		switch {
+		case r < utf8.RuneSelf:
+			buf = append(buf, byte(r))
+		case syntax.IsWordChar(r):
+			buf = append(buf, '_')
+		default:
+			buf = append(buf, 0x7f)
+		}
+	}
+	return string(buf), append(byte_offsets, len(text))
+}
+
+func find_all_matches_stdlib(re *regexp.Regexp, text string, unicode_word_boundaries bool) (ans []Match) {
+	haystack, byte_offsets := text, []int(nil)
+	if unicode_word_boundaries {
+		haystack, byte_offsets = ascii_word_proxy(text)
+	}
+	names := re.SubexpNames()
+	for _, loc := range re.FindAllStringSubmatchIndex(haystack, -1) {
+		match := Match{Groups: make([]Group, len(names))}
+		for i, name := range names {
+			match.Groups[i] = Group{Name: name, IsNamed: name != ""}
+			if s, e := loc[2*i], loc[2*i+1]; s > -1 {
+				if byte_offsets != nil {
+					s, e = byte_offsets[s], byte_offsets[e]
+				}
+				c := Capture{Text: text[s:e]}
+				c.Byte_Offsets.Start, c.Byte_Offsets.End = s, e
+				match.Groups[i].Captures = []Capture{c}
+			}
+		}
+		ans = append(ans, match)
+	}
+	return
+}
+
+func mark(all_matches []Match, post_processors []PostProcessorFunc, group_processors []GroupProcessorFunc, text string, opts *Options) (ans []Mark) {
 	sanitize_pat := regexp.MustCompile("[\r\n\x00]")
-	all_matches, _ := find_all_matches(r, text)
 	for i, m := range all_matches {
 		full_capture := m.Groups[0].LastCapture()
 		match_start, match_end := full_capture.Byte_Offsets.Start, full_capture.Byte_Offsets.End
@@ -654,11 +711,23 @@ func find_marks(text string, opts *Options, cli_args ...string) (sanitized_text 
 		if err != nil {
 			return err
 		}
-		r, err := regexp2.Compile(pattern, regexp2.RE2)
-		if err != nil {
-			return fmt.Errorf("Failed to compile the regex pattern: %#v with error: %w", pattern, err)
+		var matches []Match
+		// the builtin patterns dont need lookarounds, so use the linear time stdlib engine for them
+		if pattern != opts.Regex {
+			r, err := regexp.Compile(pattern)
+			if err != nil {
+				return fmt.Errorf("Failed to compile the regex pattern: %#v with error: %w", pattern, err)
+			}
+			// the proxy text is only valid for patterns that dont reference specific non-ASCII characters
+			matches = find_all_matches_stdlib(r, sanitized_text, opts.Type == "path" || opts.Type == "linenum")
+		} else {
+			r, err := regexp2.Compile(pattern, regexp2.RE2)
+			if err != nil {
+				return fmt.Errorf("Failed to compile the regex pattern: %#v with error: %w", pattern, err)
+			}
+			matches, _ = find_all_matches(r, sanitized_text)
 		}
-		ans = mark(r, post_processors, group_processors, sanitized_text, opts)
+		ans = mark(matches, post_processors, group_processors, sanitized_text, opts)
 		used_pattern = pattern
 		return nil
 	}
@@ -706,6 +775,13 @@ process_answer:
 	}
 	largest_index := ans[len(ans)-1].Index
 	offset := max(0, opts.HintsOffset)
+	if opts.PrefixFree {
+		alphabetLength := len(opts.Alphabet)
+		if alphabetLength == 0 {
+			alphabetLength = len(DEFAULT_HINT_ALPHABET)
+		}
+		offset = max(offset, hints_to_skip(len(ans), alphabetLength))
+	}
 	index_map = make(map[int]*Mark, len(ans))
 	for i := range ans {
 		m := &ans[i]

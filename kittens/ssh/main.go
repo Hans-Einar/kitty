@@ -6,11 +6,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kovidgoyal/kitty"
 	"io"
 	"io/fs"
 	"maps"
@@ -28,6 +27,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/emmansun/base64"
+	"golang.org/x/sys/unix"
+
+	shm "github.com/kovidgoyal/go-shm/v2"
+	"github.com/kovidgoyal/kitty"
 	"github.com/kovidgoyal/kitty/tools/cli"
 	"github.com/kovidgoyal/kitty/tools/themes"
 	"github.com/kovidgoyal/kitty/tools/tty"
@@ -37,9 +41,6 @@ import (
 	"github.com/kovidgoyal/kitty/tools/utils"
 	"github.com/kovidgoyal/kitty/tools/utils/secrets"
 	"github.com/kovidgoyal/kitty/tools/utils/shlex"
-	"github.com/kovidgoyal/kitty/tools/utils/shm"
-
-	"golang.org/x/sys/unix"
 )
 
 var _ = fmt.Print
@@ -145,6 +146,29 @@ func connection_sharing_args(kitty_pid int) ([]string, error) {
 	}, nil
 }
 
+// How long to wait for an existing ControlMaster to respond before
+// concluding that its connection to the server is dead
+const stale_master_timeout = 5 * time.Second
+
+// Return whether the ControlMaster at the end of master_cmd (the ssh command
+// line with connection sharing options, without the trailing -- hostname)
+// responds to a request that requires a round trip to the server. The request
+// asks the server to connect to a closed port which fails immediately and
+// requires running nothing on the server. ProxyCommand=false ensures that if
+// there is no master, ssh fails immediately instead of making a new
+// connection. Only returns false if ctx expires before the master responds.
+func master_responds(ctx context.Context, master_cmd []string, hostname string) bool {
+	// ssh options are first one wins so put ours before any user specified ones
+	pcmd := []string{master_cmd[0], "-o", "ControlMaster=no", "-o", "ProxyCommand=false", "-o", "BatchMode=yes", "-o", "ClearAllForwardings=yes"}
+	pcmd = append(pcmd, master_cmd[1:]...)
+	pcmd = append(pcmd, "-T", "-W", "127.0.0.1:1", "--", hostname)
+	c := exec.CommandContext(ctx, pcmd[0], pcmd[1:]...)
+	// Any result other than a timeout means the master is either responsive
+	// or not present, in both cases there is nothing to recover from
+	_ = c.Run()
+	return ctx.Err() == nil
+}
+
 func set_askpass(hostname_for_match, uname string, overrides []string) (need_to_request_data bool) {
 	need_to_request_data = true
 	sentinel := filepath.Join(utils.CacheDir(), "openssh-is-new-enough-for-askpass")
@@ -177,6 +201,7 @@ func set_askpass(hostname_for_match, uname string, overrides []string) (need_to_
 type connection_data struct {
 	remote_args        []string
 	host_opts          *Config
+	ssh_config         *SSHConfig
 	hostname_for_match string
 	username           string
 	echo_on            bool
@@ -408,6 +433,21 @@ func prepare_exec_cmd(cd *connection_data) string {
 	return "unset KITTY_SHELL_INTEGRATION; exec \"$login_shell\" -c '" + strings.Join(args, " ") + "'"
 }
 
+func prepare_remote_cmd(cd *connection_data) string {
+	if cd.ssh_config == nil || cd.ssh_config.RemoteCommand == "" {
+		return ""
+	}
+
+	remote_command := cd.ssh_config.RemoteCommand
+	if cd.script_type == "py" {
+		return base64.StdEncoding.EncodeToString(utils.UnsafeStringToBytes(remote_command))
+	}
+	if remote_command == "" {
+		return ""
+	}
+	return remote_command + "\n\nexit"
+}
+
 var data_shm shm.MMap
 
 func prepare_script(script string, replacements map[string]string) string {
@@ -417,6 +457,10 @@ func prepare_script(script string, replacements map[string]string) string {
 	if _, found := replacements["EXPORT_HOME_CMD"]; !found {
 		replacements["EXPORT_HOME_CMD"] = ""
 	}
+	if _, found := replacements["REMOTE_CMD"]; !found {
+		replacements["REMOTE_CMD"] = ""
+	}
+	replacements["HAS_REMOTE_CMD"] = utils.IfElse(replacements["REMOTE_CMD"] == "", "n", "y")
 	keys := utils.Keys(replacements)
 	for i, key := range keys {
 		keys[i] = "\\b" + key + "\\b"
@@ -434,6 +478,8 @@ func bootstrap_script(cd *connection_data) (err error) {
 	if len(cd.remote_args) > 0 {
 		exec_cmd = prepare_exec_cmd(cd)
 	}
+	remote_cmd := prepare_remote_cmd(cd)
+
 	pw, err := secrets.TokenHex()
 	if err != nil {
 		return err
@@ -467,6 +513,7 @@ func bootstrap_script(cd *connection_data) (err error) {
 	replacements := map[string]string{
 		"EXPORT_HOME_CMD": export_home_cmd,
 		"EXEC_CMD":        exec_cmd,
+		"REMOTE_CMD":      remote_cmd,
 		"TEST_SCRIPT":     cd.test_script,
 	}
 	add_bool := func(ok bool, key string) {
@@ -538,7 +585,7 @@ func drain_potential_tty_garbage(term *tty.Term) {
 	if err != nil {
 		return
 	}
-	canary, err := secrets.TokenHex()
+	canary, err := secrets.TokenAlphabet(secrets.DEFAULT_NUM_OF_BYTES_FOR_TOKEN, "0123456789")
 	if err != nil {
 		return
 	}
@@ -568,39 +615,93 @@ func drain_potential_tty_garbage(term *tty.Term) {
 	}
 }
 
-func change_colors(color_scheme string) (ans string, err error) {
-	if color_scheme == "" {
-		return
-	}
-	var theme *themes.Theme
-	if !strings.HasSuffix(color_scheme, ".conf") {
-		cs := os.ExpandEnv(color_scheme)
-		tc, closer, err := themes.LoadThemes(-1)
-		if err != nil && errors.Is(err, themes.ErrNoCacheFound) {
-			tc, closer, err = themes.LoadThemes(time.Hour * 24)
+// Load the color settings of the named color schemes, loading the themes
+// collection only if needed
+func load_color_schemes(names ...string) (ans map[string]map[string]string, err error) {
+	ans = make(map[string]map[string]string, len(names))
+	var tc *themes.Themes
+	for _, color_scheme := range names {
+		if _, found := ans[color_scheme]; found || color_scheme == "" {
+			continue
 		}
-		if err != nil {
-			return "", err
+		var theme *themes.Theme
+		if !strings.HasSuffix(color_scheme, ".conf") {
+			if tc == nil {
+				var closer io.Closer
+				tc, closer, err = themes.LoadThemes(-1)
+				if err != nil && errors.Is(err, themes.ErrNoCacheFound) {
+					tc, closer, err = themes.LoadThemes(time.Hour * 24)
+				}
+				if err != nil {
+					return nil, err
+				}
+				defer closer.Close()
+			}
+			cs := os.ExpandEnv(color_scheme)
+			if theme = tc.ThemeByName(cs); theme == nil {
+				return nil, fmt.Errorf("No theme named %#v found", cs)
+			}
+		} else if theme, err = themes.ThemeFromFile(utils.ResolveConfPath(color_scheme)); err != nil {
+			return nil, err
 		}
-		defer closer.Close()
-		theme = tc.ThemeByName(cs)
-		if theme == nil {
-			return "", fmt.Errorf("No theme named %#v found", cs)
+		if ans[color_scheme], err = theme.Settings(); err != nil {
+			return nil, err
 		}
-	} else {
-		theme, err = themes.ThemeFromFile(utils.ResolveConfPath(color_scheme))
-		if err != nil {
-			return "", err
-		}
-	}
-	ans, err = theme.AsEscapeCodes()
-	if err == nil {
-		ans = "\033[#P" + ans
 	}
 	return
 }
 
-func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err error) {
+// The escape codes to change colors for the remote session, the colors are
+// first pushed onto the color stack so that they can be restored afterwards.
+// If no color schemes for specific system color schemes are configured, the
+// colors are set via escape codes as for any program. Otherwise, the color
+// schemes for all system color schemes are sent to kitty, which switches
+// between them when the system color scheme changes. This requires kitty to
+// receive the push colors escape code, which does not happen with tmux.
+func change_colors(host_opts *Config) (ans string, err error) {
+	variants := map[string]string{
+		"dark": host_opts.Color_scheme_dark, "light": host_opts.Color_scheme_light, "no_preference": host_opts.Color_scheme_no_preference}
+	has_variants := false
+	for _, name := range variants {
+		has_variants = has_variants || name != ""
+	}
+	if !has_variants || tui.TmuxSocketAddress() != "" {
+		if host_opts.Color_scheme == "" {
+			return
+		}
+		settings, err := load_color_schemes(host_opts.Color_scheme)
+		if err != nil {
+			return "", err
+		}
+		return "\033[#P" + themes.ColorSettingsAsEscapeCodes(settings[host_opts.Color_scheme]), nil
+	}
+	for k, name := range variants {
+		if name == "" {
+			variants[k] = host_opts.Color_scheme
+		}
+	}
+	settings, err := load_color_schemes(slices.Collect(maps.Values(variants))...)
+	if err != nil {
+		return "", err
+	}
+	payload := make(map[string]map[string]any, len(variants))
+	for k, name := range variants {
+		if name != "" {
+			payload[k] = themes.ColorSettingsAsSpec(settings[name])
+		}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	dcs, err := tui.DCSToKitty("color-scheme", utils.UnsafeBytesToString(data))
+	if err != nil {
+		return "", err
+	}
+	return "\033[#P" + dcs, nil
+}
+
+func run_ssh(ssh_args, server_args, found_extra_args []string, ssh_config_channel <-chan *SSHConfig) (rc int, err error) {
 	go shell_integration.Data()
 	go RelevantKittyOpts()
 	defer func() {
@@ -609,7 +710,9 @@ func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err erro
 			_ = data_shm.Unlink()
 		}
 	}()
-	cmd := append([]string{SSHExe()}, ssh_args...)
+	// In ssh CLI parsing first -o wins
+	cmd := []string{SSHExe(), "-o", "RemoteCommand=none"}
+	cmd = append(cmd, ssh_args...)
 	cd := connection_data{remote_args: server_args[1:]}
 	hostname := server_args[0]
 	if len(cd.remote_args) == 0 {
@@ -666,13 +769,32 @@ func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err erro
 			return master_is_alive
 		}
 		master_checked = true
-		check_cmd := slices.Insert(cmd, 1, "-O", "check")
+		// slices.Insert can mutate cmd's backing array in place; clone so cmd stays intact
+		check_cmd := slices.Insert(slices.Clone(cmd), 1, "-O", "check")
 		master_is_alive = exec.Command(check_cmd[0], check_cmd[1:]...).Run() == nil
 		return master_is_alive
 	}
 
+	// The value to use if we end up making a new connection rather than
+	// re-using an existing master
+	need_to_request_data_without_master := need_to_request_data
 	if need_to_request_data && host_opts.Share_connections && master_is_functional() {
 		need_to_request_data = false
+	}
+	// Tell the master to exit, needed when its connection to the server has
+	// died but it has not noticed yet. This only talks to the master over its
+	// local socket so it does not hang even when the connection is dead.
+	stop_master := func() {
+		cmcmd := slices.Clone(cmd[:insertion_point])
+		cmcmd = append(cmcmd, control_master_args...)
+		cmcmd = append(cmcmd, "-O", "exit", "--", hostname)
+		ctx, cancel := context.WithTimeout(context.Background(), stale_master_timeout)
+		defer cancel()
+		if err := exec.CommandContext(ctx, cmcmd[0], cmcmd[1:]...).Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to stop unresponsive SSH ControlMaster with error: %s\n", err)
+		}
+		master_checked = false
+		master_is_alive = false
 	}
 	run_control_master := func() error {
 		cmcmd := slices.Clone(cmd[:insertion_point])
@@ -689,17 +811,26 @@ func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err erro
 		master_is_alive = false
 		return err
 	}
+	// Whether to check that an existing master is responsive in parallel with
+	// starting the session. Not needed if we know there is no master.
+	probe_master := host_opts.Share_connections && (!master_checked || master_is_alive)
 	if host_opts.Forward_remote_control && os.Getenv("KITTY_LISTEN_ON") != "" {
 		if !host_opts.Share_connections {
 			return 1, fmt.Errorf("Cannot use forward_remote_control=yes without share_connections=yes as it relies on SSH Controlmasters")
 		}
-		if !master_is_functional() {
-			if err = run_control_master(); err != nil {
-				return 1, err
-			}
+		ensure_master := func() error {
 			if !master_is_functional() {
-				return 1, fmt.Errorf("SSH ControlMaster not functional after being started explicitly")
+				if err := run_control_master(); err != nil {
+					return err
+				}
+				if !master_is_functional() {
+					return fmt.Errorf("SSH ControlMaster not functional after being started explicitly")
+				}
 			}
+			return nil
+		}
+		if err = ensure_master(); err != nil {
+			return 1, err
 		}
 		protocol, listen_on, found := strings.Cut(os.Getenv("KITTY_LISTEN_ON"), ":")
 		if !found {
@@ -712,13 +843,34 @@ func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err erro
 		cmcmd = append(cmcmd, control_master_args...)
 		cmcmd = append(cmcmd, "-R", "0:"+listen_on, "-O", "forward")
 		cmcmd = append(cmcmd, "--", hostname)
-		c := exec.Command(cmcmd[0], cmcmd[1:]...)
 		b := bytes.Buffer{}
-		c.Stdout = &b
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
+		request_forward := func() (timed_out bool, err error) {
+			// Setting up the forward requires a round trip to the server, so
+			// it hangs if the master's connection is dead
+			ctx, cancel := context.WithTimeout(context.Background(), stale_master_timeout)
+			defer cancel()
+			b.Reset()
+			c := exec.CommandContext(ctx, cmcmd[0], cmcmd[1:]...)
+			c.Stdout = &b
+			c.Stderr = os.Stderr
+			err = c.Run()
+			return ctx.Err() != nil, err
+		}
+		timed_out, err := request_forward()
+		if timed_out {
+			fmt.Fprintln(os.Stderr, "Existing shared SSH connection is not responding, reconnecting...")
+			stop_master()
+			need_to_request_data = need_to_request_data_without_master
+			if err = ensure_master(); err != nil {
+				return 1, err
+			}
+			_, err = request_forward()
+		}
+		if err != nil {
 			return 1, fmt.Errorf("%s\nSetup of port forward in SSH ControlMaster failed with error: %w", b.String(), err)
 		}
+		// The master has just successfully done a round trip to the server
+		probe_master = false
 		port, err := strconv.Atoi(strings.TrimSpace(b.String()))
 		if err != nil {
 			os.Stderr.Write(b.Bytes())
@@ -734,14 +886,14 @@ func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err erro
 	cd.host_opts, cd.literal_env = host_opts, literal_env
 	cd.request_data = need_to_request_data
 	cd.hostname_for_match, cd.username = hostname_for_match, uname
-	escape_codes_to_set_colors, err := change_colors(cd.host_opts.Color_scheme)
+	escape_codes_to_set_colors, err := change_colors(cd.host_opts)
 	if err == nil {
-		err = term.WriteAllString(escape_codes_to_set_colors + loop.SAVE_PRIVATE_MODE_VALUES + loop.HANDLE_TERMIOS_SIGNALS.EscapeCodeToSet())
+		err = term.WriteAllString(escape_codes_to_set_colors + loop.SAVE_PRIVATE_MODE_VALUES + loop.PUSH_KEY_FLAGS + loop.HANDLE_TERMIOS_SIGNALS.EscapeCodeToSet())
 	}
 	if err != nil {
 		return 1, err
 	}
-	restore_escape_codes := loop.RESTORE_PRIVATE_MODE_VALUES + loop.HANDLE_TERMIOS_SIGNALS.EscapeCodeToReset()
+	restore_escape_codes := loop.RESTORE_PRIVATE_MODE_VALUES + loop.POP_KEY_FLAGS + loop.HANDLE_TERMIOS_SIGNALS.EscapeCodeToReset()
 	if escape_codes_to_set_colors != "" {
 		restore_escape_codes += "\x1b[#Q"
 	}
@@ -757,44 +909,104 @@ func run_ssh(ssh_args, server_args, found_extra_args []string) (rc int, err erro
 		}
 	}
 	defer cleanup()
-	err = get_remote_command(&cd)
-	if err != nil {
-		return 1, err
+	// Receive ssh config
+	cd.ssh_config = <-ssh_config_channel
+	var pre_launch_termios unix.Termios
+	if err = term.Tcgetattr(&pre_launch_termios); err != nil {
+		return 1, fmt.Errorf("Failed to get terminal attributes with error: %w", err)
 	}
-	cmd = append(cmd, cd.rcmd...)
-	c := exec.Command(cmd[0], cmd[1:]...)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	err = c.Start()
-	if err != nil {
-		return 1, err
-	}
-
-	if !cd.request_data {
-		rq := fmt.Sprintf("id=%s:pwfile=%s:pw=%s", cd.replacements["REQUEST_ID"], cd.replacements["PASSWORD_FILENAME"], cd.replacements["DATA_PASSWORD"])
-		err := term.ApplyOperations(tty.TCSANOW, tty.SetNoEcho)
-		if err == nil {
-			var dcs string
-			dcs, err = tui.DCSToKitty("ssh", rq)
+	launch := func() (*exec.Cmd, error) {
+		if err := get_remote_command(&cd); err != nil {
+			return nil, err
+		}
+		scmd := append(slices.Clone(cmd), cd.rcmd...)
+		c := exec.Command(scmd[0], scmd[1:]...)
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := c.Start(); err != nil {
+			return nil, err
+		}
+		if !cd.request_data {
+			rq := fmt.Sprintf("id=%s:pwfile=%s:pw=%s", cd.replacements["REQUEST_ID"], cd.replacements["PASSWORD_FILENAME"], cd.replacements["DATA_PASSWORD"])
+			err := term.ApplyOperations(tty.TCSANOW, tty.SetNoEcho)
 			if err == nil {
-				err = term.WriteAllString(dcs)
+				var dcs string
+				dcs, err = tui.DCSToKitty("ssh", rq)
+				if err == nil {
+					err = term.WriteAllString(dcs)
+				}
+			}
+			if err != nil {
+				_ = c.Process.Kill()
+				_ = c.Wait()
+				return nil, err
 			}
 		}
-		if err != nil {
-			_ = c.Process.Kill()
-			_ = c.Wait()
-			return 1, err
-		}
+		return c, nil
+	}
+	c, err := launch()
+	if err != nil {
+		return 1, err
 	}
 	go func() {
 		<-sigs
 		// ignore any interrupt and terminate signals as they will usually be sent to the ssh child process as well
 		// and we are waiting on that.
 	}()
-	err = c.Wait()
+	if probe_master {
+		// An existing master may have a dead connection to the server (for
+		// example after a network change or suspend) without having noticed
+		// yet, in which case the session hangs forever. Check the master in
+		// parallel with the session so as not to add latency when it is fine.
+		session_done := make(chan error, 1)
+		go func() { session_done <- c.Wait() }()
+		probe_ctx, cancel_probe := context.WithTimeout(context.Background(), stale_master_timeout)
+		probe_done := make(chan bool, 1)
+		go func() { probe_done <- master_responds(probe_ctx, cmd[:len(cmd)-2], hostname) }()
+		select {
+		case err = <-session_done:
+			cancel_probe()
+			<-probe_done
+		case responded := <-probe_done:
+			cancel_probe()
+			if responded {
+				err = <-session_done
+			} else {
+				// The session is stuck waiting on the same dead connection,
+				// so it has not produced any output yet and is safe to kill
+				_ = c.Process.Signal(unix.SIGTERM)
+				select {
+				case <-session_done:
+				case <-time.After(time.Second):
+					_ = c.Process.Kill()
+					<-session_done
+				}
+				fmt.Fprintln(os.Stderr, "Existing shared SSH connection is not responding, reconnecting...")
+				stop_master()
+				// Discard the data kitty sent for the killed session and
+				// restore the terminal to the state the session expects
+				drain_potential_tty_garbage(term)
+				if err = term.Tcsetattr(tty.TCSANOW, &pre_launch_termios); err != nil {
+					return 1, fmt.Errorf("Failed to restore terminal attributes with error: %w", err)
+				}
+				// kitty has already consumed the data for the killed session
+				if data_shm != nil {
+					data_shm.Close()
+					_ = data_shm.Unlink()
+					data_shm = nil
+				}
+				cd.request_data = need_to_request_data_without_master
+				if c, err = launch(); err != nil {
+					return 1, err
+				}
+				err = c.Wait()
+			}
+		}
+	} else {
+		err = c.Wait()
+	}
 	drain_potential_tty_garbage(term)
 	if err != nil {
-		var exit_err *exec.ExitError
-		if errors.As(err, &exit_err) {
+		if exit_err, ok := errors.AsType[*exec.ExitError](err); ok {
 			if state := exit_err.ProcessState.String(); state == "signal: interrupt" {
 				cleanup()
 				_ = unix.Kill(os.Getpid(), unix.SIGINT)
@@ -833,13 +1045,18 @@ func main(cmd *cli.Command, o *Options, args []string) (rc int, err error) {
 	if passthrough {
 		return 1, unix.Exec(SSHExe(), utils.Concat([]string{"ssh"}, ssh_args, server_args), os.Environ())
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ssh_config_channel := ReadSSHConfig(ctx, ssh_args, server_args[0])
+
 	if os.Getenv("KITTY_WINDOW_ID") == "" || os.Getenv("KITTY_PID") == "" {
 		return 1, fmt.Errorf("The SSH kitten is meant to run inside a kitty window")
 	}
 	if !tty.IsTerminal(os.Stdin.Fd()) {
 		return 1, fmt.Errorf("The SSH kitten is meant for interactive use only, STDIN must be a terminal")
 	}
-	return run_ssh(ssh_args, server_args, found_extra_args)
+	return run_ssh(ssh_args, server_args, found_extra_args, ssh_config_channel)
 }
 
 func EntryPoint(parent *cli.Command) {

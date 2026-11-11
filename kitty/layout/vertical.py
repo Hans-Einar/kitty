@@ -5,18 +5,15 @@ from collections.abc import Generator, Iterable
 from typing import Any
 
 from kitty.borders import BorderColor
-from kitty.types import Edges, WindowMapper
-from kitty.typing_compat import WindowType
+from kitty.types import Edges, NeighborsMap, WindowMapper
+from kitty.typing_compat import EdgeLiteral, WindowType
 from kitty.window_list import WindowGroup, WindowList
 
-from .base import BorderLine, Layout, LayoutData, LayoutDimension, NeighborsMap, lgd
+from .base import BorderLine, DragOverlayMode, Layout, LayoutData, LayoutDimension, lgd
 
 
 def borders(
-    data: Iterable[tuple[WindowGroup, LayoutData, LayoutData]],
-    is_horizontal: bool,
-    all_windows: WindowList,
-    start_offset: int = 1, end_offset: int = 1
+    data: Iterable[tuple[WindowGroup, LayoutData, LayoutData]], is_horizontal: bool, all_windows: WindowList, start_offset: int = 1, end_offset: int = 1
 ) -> Generator[BorderLine, None, None]:
     borders: list[BorderLine] = []
     active_group = all_windows.active_group
@@ -31,27 +28,35 @@ def borders(
     for wg, xl, yl in data:
         if is_horizontal:
             e1 = Edges(
-                xl.content_pos - xl.space_before, yl.content_pos - yl.space_before,
-                xl.content_pos - xl.space_before + bw, yl.content_pos + yl.content_size + yl.space_after
+                xl.content_pos - xl.space_before,
+                yl.content_pos - yl.space_before,
+                xl.content_pos - xl.space_before + bw,
+                yl.content_pos + yl.content_size + yl.space_after,
             )
             e2 = Edges(
-                xl.content_pos + xl.content_size + xl.space_after - bw, yl.content_pos - yl.space_before,
-                xl.content_pos + xl.content_size + xl.space_after, yl.content_pos + yl.content_size + yl.space_after
+                xl.content_pos + xl.content_size + xl.space_after - bw,
+                yl.content_pos - yl.space_before,
+                xl.content_pos + xl.content_size + xl.space_after,
+                yl.content_pos + yl.content_size + yl.space_after,
             )
         else:
             e1 = Edges(
-                xl.content_pos - xl.space_before, yl.content_pos - yl.space_before,
-                xl.content_pos + xl.content_size + xl.space_after, yl.content_pos - yl.space_before + bw
+                xl.content_pos - xl.space_before,
+                yl.content_pos - yl.space_before,
+                xl.content_pos + xl.content_size + xl.space_after,
+                yl.content_pos - yl.space_before + bw,
             )
             e2 = Edges(
-                xl.content_pos - xl.space_before, yl.content_pos + yl.content_size + yl.space_after - bw,
-                xl.content_pos + xl.content_size + xl.space_after, yl.content_pos + yl.content_size + yl.space_after
+                xl.content_pos - xl.space_before,
+                yl.content_pos + yl.content_size + yl.space_after - bw,
+                xl.content_pos + xl.content_size + xl.space_after,
+                yl.content_pos + yl.content_size + yl.space_after,
             )
         color = BorderColor.inactive
         if needs_borders_map.get(wg.id):
             color = BorderColor.active if wg is active_group else BorderColor.bell
-        borders.append(BorderLine(e1, color))
-        borders.append(BorderLine(e2, color))
+        borders.append(BorderLine(e1, color, -wg.active_window_id, not is_horizontal))
+        borders.append(BorderLine(e2, color, wg.active_window_id, not is_horizontal))
 
     last_idx = len(borders) - 1 - end_offset
     for i, x in enumerate(borders):
@@ -60,10 +65,10 @@ def borders(
 
 
 class Vertical(Layout):
-
     name = 'vertical'
     main_is_horizontal = False
     no_minimal_window_borders = True
+    drag_overlay_mode = DragOverlayMode.axis_y
     main_axis_layout = Layout.ylayout
     perp_axis_layout = Layout.xlayout
 
@@ -79,7 +84,7 @@ class Vertical(Layout):
         self.biased_map: dict[int, float] = {}
         return True
 
-    def apply_bias(self, idx: int, increment: float, all_windows: WindowList, is_horizontal: bool = True) -> bool:
+    def apply_bias(self, window_id: int, increment: float, all_windows: WindowList, is_horizontal: bool = True) -> bool:
         if self.main_is_horizontal != is_horizontal:
             return False
         num_windows = all_windows.num_groups
@@ -87,8 +92,8 @@ class Vertical(Layout):
             return False
         before_layout = list(self.variable_layout(all_windows, self.biased_map))
         candidate = self.biased_map.copy()
-        before = candidate.get(idx, 0)
-        candidate[idx] = before + increment
+        before = candidate.get(window_id, 0)
+        candidate[window_id] = before + increment
         if before_layout == list(self.variable_layout(all_windows, candidate)):
             return False
         self.biased_map = candidate
@@ -108,34 +113,41 @@ class Vertical(Layout):
                 xl, yl = yl, xl
             yield wg, xl, yl
 
-    def do_layout(self, all_windows: WindowList) -> None:
-        window_count = all_windows.num_groups
+    def do_layout(self, windows: WindowList) -> None:
+        window_count = windows.num_groups
         if window_count == 1:
-            self.layout_single_window_group(next(all_windows.iter_all_layoutable_groups()))
+            self.layout_single_window_group(next(windows.iter_all_layoutable_groups()))
             return
-        for wg, xl, yl in self.generate_layout_data(all_windows):
+        for wg, xl, yl in self.generate_layout_data(windows):
             self.set_window_group_geometry(wg, xl, yl)
 
-    def minimal_borders(self, all_windows: WindowList) -> Generator[BorderLine, None, None]:
-        window_count = all_windows.num_groups
+    def minimal_borders(self, windows: WindowList) -> Generator[BorderLine, None, None]:
+        window_count = windows.num_groups
         if window_count < 2 or not lgd.draw_minimal_borders:
             return
-        yield from borders(self.generate_layout_data(all_windows), self.main_is_horizontal, all_windows)
+        yield from borders(self.generate_layout_data(windows), self.main_is_horizontal, windows)
 
-    def neighbors_for_window(self, window: WindowType, all_windows: WindowList) -> NeighborsMap:
-        wg = all_windows.group_for_window(window)
+    def neighbors_for_window(self, window: WindowType, windows: WindowList) -> NeighborsMap:
+        wg = windows.group_for_window(window)
         assert wg is not None
-        groups = tuple(all_windows.iter_all_layoutable_groups())
+        groups = tuple(windows.iter_all_layoutable_groups())
         idx = groups.index(wg)
         lg = len(groups)
         if lg > 1:
-            before = [groups[(idx - 1 + lg) % lg].id]
-            after = [groups[(idx + 1) % lg].id]
+            after = [groups[(idx - 1 + lg) % lg].id]
+            before = [groups[(idx + 1) % lg].id]
         else:
             before, after = [], []
+        ans: NeighborsMap = {}
+        akey: EdgeLiteral = 'top'
+        bkey: EdgeLiteral = 'bottom'
         if self.main_is_horizontal:
-            return {'left': before, 'right': after, 'top': [], 'bottom': []}
-        return {'top': before, 'bottom': after, 'left': [], 'right': []}
+            akey, bkey = 'left', 'right'
+        if before:
+            ans[bkey] = before
+        if after:
+            ans[akey] = after
+        return ans
 
     def layout_state(self) -> dict[str, Any]:
         return {'biased_map': self.biased_map}
@@ -144,9 +156,10 @@ class Vertical(Layout):
         self.biased_map = {int(k): v for k, v in layout_state['biased_map'].items()}
         return True
 
-class Horizontal(Vertical):
 
+class Horizontal(Vertical):
     name = 'horizontal'
     main_is_horizontal = True
+    drag_overlay_mode = DragOverlayMode.axis_x
     main_axis_layout = Layout.xlayout
     perp_axis_layout = Layout.ylayout

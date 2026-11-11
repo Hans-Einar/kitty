@@ -9,11 +9,10 @@ from unittest.mock import Mock, patch
 from kitty import resume
 from kitty.session import default_save_as_session_opts, save_as_session_part2
 
-from . import BaseTest
+from .base import BaseTest
 
 
 class ResumeTest(BaseTest):
-
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -93,6 +92,7 @@ class ResumeTest(BaseTest):
     def test_serialized_relative_cwd_uses_session_directory(self):
         from kitty.config import defaults
         from kitty.session import parse_session
+
         raw = "cd first\nlaunch 'kitty-unserialize-data={\"id\": 1}' --cwd='second space'\n"
         sessions = list(parse_session(raw, defaults, session_path=str(self.root / 'saved.kitty-session')))
         self.assertEqual(sessions[0].tabs[0].windows[0].launch_spec.opts.cwd, str(self.root / 'second space'))
@@ -100,9 +100,10 @@ class ResumeTest(BaseTest):
     def test_launch_argv_preserves_profile_and_literal_path(self):
         path = self.root / 'name $(touch BAD);.kitty-session'
         with patch('kitty.constants.kitty_exe', return_value='/real/kitty'):
-            self.assertEqual(resume.launch_argv(path, ['profile a.conf', 'extra.conf'], 'wmkitty'),
-                             ['/real/kitty', '--config', 'profile a.conf', '--config', 'extra.conf',
-                              '--name', 'wmkitty', '--session', str(path)])
+            self.assertEqual(
+                resume.launch_argv(path, ['profile a.conf', 'extra.conf'], 'wmkitty'),
+                ['/real/kitty', '--config', 'profile a.conf', '--config', 'extra.conf', '--name', 'wmkitty', '--session', str(path)],
+            )
 
     def screen(self, keys):
         screen = Mock()

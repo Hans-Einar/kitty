@@ -94,12 +94,13 @@ no-complete
     comes with a kitty completion script.
 
 no-sudo
-    Do not alias :program:`sudo` to ensure the kitty terminfo files are
-    available in the sudo environment. This is needed if you have sudo
-    configured to disable setting of environment variables on the command line.
-    By default, if sudo is configured to allow all commands for the current
-    user, setting of environment variables at the command line is also allowed.
-    Only if commands are restricted is this needed.
+    Do not alias :program:`sudo` and :program:`run0` to ensure the kitty
+    terminfo files are available in the sudo/run0 environment. Turning this off
+    is needed if you have sudo configured to disable setting of environment
+    variables on the command line. By default, if sudo is configured to allow
+    all commands for the current user, setting of environment variables at the
+    command line is also allowed. Only if commands are restricted is this
+    needed.
 
 
 More ways to browse command output
@@ -156,29 +157,31 @@ kitty injects some shell specific code into the shell, to enable shell
 integration. How it does so varies for different shells.
 
 
-.. tab:: zsh
+.. tab-set::
 
-   For zsh, kitty sets the :envvar:`ZDOTDIR` environment variable to make zsh
-   load kitty's :file:`.zshenv` which restores the original value of
-   :envvar:`ZDOTDIR` and sources the original :file:`.zshenv`. It then loads
-   the shell integration code. The remainder of zsh's startup process proceeds
-   as normal.
+   .. tab-item:: zsh
 
-.. tab:: fish
+      For zsh, kitty sets the :envvar:`ZDOTDIR` environment variable to make zsh
+      load kitty's :file:`.zshenv` which restores the original value of
+      :envvar:`ZDOTDIR` and sources the original :file:`.zshenv`. It then loads
+      the shell integration code. The remainder of zsh's startup process proceeds
+      as normal.
 
-    For fish, to make it automatically load the integration code provided by
-    kitty, the integration script directory path is prepended to the
-    :envvar:`XDG_DATA_DIRS` environment variable. This is only applied to the
-    fish process and will be cleaned up by the integration script after startup.
-    No files are added or modified.
+   .. tab-item:: fish
 
-.. tab:: bash
+      For fish, to make it automatically load the integration code provided by
+      kitty, the integration script directory path is prepended to the
+      :envvar:`XDG_DATA_DIRS` environment variable. This is only applied to the
+      fish process and will be cleaned up by the integration script after startup.
+      No files are added or modified.
 
-    For bash, kitty starts bash in POSIX mode, using the environment variable
-    :envvar:`ENV` to load the shell integration script. This prevents bash from
-    loading any startup files itself. The loading of the startup files is done
-    by the integration script, after disabling POSIX mode. From the perspective
-    of those scripts there should be no difference to running vanilla bash.
+   .. tab-item:: bash
+
+      For bash, kitty starts bash in POSIX mode, using the environment variable
+      :envvar:`ENV` to load the shell integration script. This prevents bash from
+      loading any startup files itself. The loading of the startup files is done
+      by the integration script, after disabling POSIX mode. From the perspective
+      of those scripts there should be no difference to running vanilla bash.
 
 
 Then, when launching the shell, kitty sets the environment variable
@@ -196,22 +199,23 @@ code used for each shell below:
     <details>
     <summary>Click to toggle shell integration code</summary>
 
-.. tab:: zsh
+.. tab-set::
 
-    .. literalinclude:: ../shell-integration/zsh/kitty-integration
-        :language: zsh
+   .. tab-item:: zsh
 
+      .. literalinclude:: ../shell-integration/zsh/kitty-integration
+         :language: zsh
 
-.. tab:: fish
+   .. tab-item:: fish
 
-    .. literalinclude:: ../shell-integration/fish/vendor_conf.d/kitty-shell-integration.fish
-        :language: fish
-        :force:
+      .. literalinclude:: ../shell-integration/fish/vendor_conf.d/kitty-shell-integration.fish
+         :language: fish
+         :force:
 
-.. tab:: bash
+   .. tab-item:: bash
 
-    .. literalinclude:: ../shell-integration/bash/kitty.bash
-        :language: bash
+      .. literalinclude:: ../shell-integration/bash/kitty.bash
+         :language: bash
 
 .. raw:: html
 
@@ -266,7 +270,7 @@ over SSH when using :doc:`kittens/ssh`.
 
 The :command:`clone-in-kitty` command takes almost all the same arguments as the
 :doc:`launch <launch>` command, so you can open a new tab instead or a new OS
-window, etc. Arguments of launch that can cause code execution or that don't
+window, etc. Arguments of launch that don't
 make sense when cloning are ignored. Most prominently, the following options are
 ignored: :option:`--allow-remote-control <launch --allow-remote-control>`,
 :option:`--copy-cmdline <launch --copy-cmdline>`, :option:`--copy-env <launch
@@ -313,7 +317,9 @@ window, etc. Not all arguments are supported, see the discussion in the
 :ref:`clone_shell` section above.
 
 In order to avoid remote code execution, kitty will only execute the configured
-editor and pass the file path to edit to it.
+editor and pass the file path to edit to it and it will strip all environment
+variables from the :command:`edit-in-kitty` command line. Additionally, parsing
+of colors is more limited, reading colors from config files is not allowed.
 
 .. note:: To edit files using sudo the best method is to set the
    :code:`SUDO_EDITOR` environment variable to ``kitten edit-in-kitty`` and
@@ -364,36 +370,37 @@ First, in :file:`kitty.conf` set:
 
 Then in your shell's rc file, add the lines:
 
-.. tab:: zsh
+.. tab-set::
 
-    .. code-block:: sh
+   .. tab-item:: zsh
 
-        if test -n "$KITTY_INSTALLATION_DIR"; then
-            export KITTY_SHELL_INTEGRATION="enabled"
-            autoload -Uz -- "$KITTY_INSTALLATION_DIR"/shell-integration/zsh/kitty-integration
-            kitty-integration
-            unfunction kitty-integration
-        fi
+      .. code-block:: sh
 
-.. tab:: fish
+         if test -n "$KITTY_INSTALLATION_DIR"; then
+             export KITTY_SHELL_INTEGRATION="enabled"
+             autoload -Uz -- "$KITTY_INSTALLATION_DIR"/shell-integration/zsh/kitty-integration
+             kitty-integration
+             unfunction kitty-integration
+         fi
 
-    .. code-block:: fish
+   .. tab-item:: fish
 
-        if set -q KITTY_INSTALLATION_DIR
-            set --global KITTY_SHELL_INTEGRATION enabled
-            source "$KITTY_INSTALLATION_DIR/shell-integration/fish/vendor_conf.d/kitty-shell-integration.fish"
-            set --prepend fish_complete_path "$KITTY_INSTALLATION_DIR/shell-integration/fish/vendor_completions.d"
-        end
+      .. code-block:: fish
 
+         if set -q KITTY_INSTALLATION_DIR
+             set --global KITTY_SHELL_INTEGRATION enabled
+             source "$KITTY_INSTALLATION_DIR/shell-integration/fish/vendor_conf.d/kitty-shell-integration.fish"
+             set --prepend fish_complete_path "$KITTY_INSTALLATION_DIR/shell-integration/fish/vendor_completions.d"
+         end
 
-.. tab:: bash
+   .. tab-item:: bash
 
-    .. code-block:: sh
+      .. code-block:: sh
 
-        if test -n "$KITTY_INSTALLATION_DIR"; then
-            export KITTY_SHELL_INTEGRATION="enabled"
-            source "$KITTY_INSTALLATION_DIR/shell-integration/bash/kitty.bash"
-        fi
+         if test -n "$KITTY_INSTALLATION_DIR"; then
+             export KITTY_SHELL_INTEGRATION="enabled"
+             source "$KITTY_INSTALLATION_DIR/shell-integration/bash/kitty.bash"
+         fi
 
 The value of :envvar:`KITTY_SHELL_INTEGRATION` is the same as that for
 :opt:`shell_integration`, except if you want to disable shell integration
@@ -468,13 +475,21 @@ to control its behavior, separated by semi-colons. They are:
     this tells kitty that the secondary (PS2) prompt is starting at the
     current line.
 
-``click_events=1``
+``click_events=1|2``
     this tells kitty that the shell is capable of handling
     mouse click events. kitty will thus send a click event to the shell when
     the user clicks somewhere in the prompt. The shell can then move the cursor
     to that position or perform some other appropriate action. Without this,
     kitty will instead generate a number of fake key events to move the cursor
-    to the clicked location, which is not fully robust.
+    to the clicked location, which is not fully robust. A value of ``1`` will
+    cause the click events to have absolute y co-ordinates, a value of ``2``
+    will cause them to have y-coordinates relative to the top line of the
+    current prompt. In relative mode, y is zero for cells on the top line of
+    the current prompt. The current prompt here is either the secondary (PS2) or
+    primary prompt. If the secondary prompt is on the same line or above the
+    mouse position, then the reported y will be with respect to that, otherwise
+    with respect to the primary prompt. The click event is encoded in the SGR
+    encoding from xterm.
 
 kitty also optionally supports sending the cmdline going to be executed with ``<OSC>133;C`` as:
 

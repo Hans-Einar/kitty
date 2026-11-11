@@ -49,6 +49,7 @@ def remember_session(path: str) -> None:
                     os.unlink(temporary)
     except (OSError, ValueError) as e:
         from .utils import log_error
+
         log_error(f'Session saved, but could not update the resume catalog: {e}')
 
 
@@ -80,11 +81,13 @@ def discover_sessions(directories: list[Path]) -> tuple[list[Path], list[str]]:
 def validate_session(path: Path, configs: list[str]) -> None:
     from .config import load_config
     from .session import parse_session
+
     list(parse_session(path.read_text(), load_config(*configs), session_path=str(path)))
 
 
 def launch_argv(path: Path, configs: list[str], name: str) -> list[str]:
     from .constants import kitty_exe
+
     argv = [kitty_exe()]
     for config in configs:
         argv.extend(('--config', config))
@@ -121,7 +124,7 @@ def choose_session(screen: 'curses.window', paths: list[Path], configs: list[str
         write(1, 'Search: ' + query)
         count = max(1, height - 5)
         start = max(0, selected - count + 1)
-        for row, path in enumerate(matches[start:start + count], 2):
+        for row, path in enumerate(matches[start : start + count], 2):
             try:
                 modified = datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
             except OSError:
@@ -161,6 +164,7 @@ def choose_session(screen: 'curses.window', paths: list[Path], configs: list[str
 
 def main(args: list[str]) -> None:
     from .constants import config_dir
+
     parser = argparse.ArgumentParser(prog='kitty resume', description='Select a manually saved native Kitty session.')
     parser.add_argument('--directory', action='append', default=[], help='Also search this directory for session files')
     parser.add_argument('--config', action='append', default=[], help='Kitty configuration used when restoring')

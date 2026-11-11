@@ -55,7 +55,7 @@ at the specified size. It is an ``OSC`` code of the form::
 
     <OSC> _text_size_code ; metadata ; text <terminator>
 
-Here, ``OSC`` is the bytes ``ESC ] (0x1b 0x5b)``. The ``metadata`` is a colon
+Here, ``OSC`` is the bytes ``ESC ] (0x1b 0x5d)``. The ``metadata`` is a colon
 separated list of ``key=value`` pairs. The final part of the escape code is the
 text which is simply plain text encoded as :ref:`safe_utf8`, the text must be
 no longer than ``4096`` bytes. Longer strings than that must be broken up into
@@ -77,9 +77,9 @@ There are only a handful of metadata keys, defined in the table below:
 
     "d", "Integer from 0 to 15", "0", "The denominator for the fractional scale. Must be ``> n`` when non-zero."
 
-    "v", "Integer from 0 to 2",  "0", "The vertical alignment to use for fractionally scaled text. ``0`` - top, ``1`` - bottom, ``2`` - centered"
+    "v", "Integer from 0 to 2",  "0", "The vertical alignment to use for fractionally scaled text (n < d). ``0`` - top, ``1`` - bottom, ``2`` - centered"
 
-    "h", "Integer from 0 to 2",  "0", "The horizontal alignment to use for fractionally scaled text. ``0`` - left, ``1`` - right, ``2`` - centered"
+    "h", "Integer from 0 to 2",  "0", "The horizontal alignment to use for fractionally scaled text (n < d). ``0`` - left, ``1`` - right, ``2`` - centered"
 
 
 How it works
@@ -160,8 +160,11 @@ The fractional scale **does not** affect the number of cells the text occupies,
 instead, it just adjusts the rendered font size within those cells.
 The fraction is specified using an integer numerator and denominator (``n`` and
 ``d``). In addition, by using the ``v`` key one can vertically align the
-fractionally scaled text at top, bottom or middle. Similarly, the ``h`` key
-does horizontal alignment — left, right or centered.
+fractionally scaled render area at top, bottom or middle. Similarly, the ``h`` key
+does horizontal alignment — left, right or centered. Note that alignment
+here is not actual text alignment, it refers to how the fractionally scaled
+render area fits inside the full render area of size ``s * w`` by ``s`` cells.
+Thus, alignment only applies when ``n < d``.
 
 When using fractional scaling one often wants to fit more than a single
 character per cell. To accommodate that, there is the ``w`` key. This specifies
@@ -361,7 +364,7 @@ The algorithm for splitting text into cells
    are brought to light in that discussion, there may be small changes to the
    algorithm to address them. Additionally, in the future if the Unicode standard
    changes in ways that affect this algorithm, it will be updated. Currently the
-   algorithm is based on Unicode version 16.
+   algorithm is based on Unicode version 17.
 
 Here, we specify how a terminal must split up text into cells, where a cell is
 a width one unit in the character grid the terminal displays.
@@ -374,15 +377,15 @@ fully specify text handling for terminals. The full algorithm is specified below
 A terminal using this algorithm must decode the bytes they receive
 into Unicode scalar values (i.e., code points except surrogates) using UTF-8.
 When it encounters any UTF-8 ill-formed subsequences,
-it must be replace each
-`maximal subpart of the ill-formed subsequence <https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G66453>`__
+it must replace each
+`maximal subpart of the ill-formed subsequence <https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/#G66453>`__
 with a :code:`U+FFFD REPLACEMENT CHARACTER` (�).
 
 For each decoded code point:
 
 #. First check if the code point is an ASCII control code, and handle it
-   appropriately. ASCII control codes are the code points less than :code:`U+0032` and the
-   code point :code:`U+0127 DEL`. The code point :code:`U+0000 NUL` must be discarded.
+   appropriately. ASCII control codes are the code points less than :code:`U+0020` and the
+   code point :code:`U+007F DEL`. The code point :code:`U+0000 NUL` must be discarded.
 
 #. Next, check if the code point is *invalid*, and if it is, discard it
    and finish processing. Invalid code points are code points with Unicode category :code:`Cc or Cs`
@@ -409,7 +412,12 @@ For each decoded code point:
 
 #. If there is no boundary, the current code point is added to the previous
    cell and processing of the code point is finished. See the :ref:`var_select`
-   section below for handling of Unicode Variation selectors.
+   section below for handling of Unicode Variation selectors. If the code point has
+   ``Grapheme_Cluster_Break=SpacingMark`` and a non-zero width and the previous
+   cell is a single, unscaled cell whose width was not set explicitly using the
+   ``w`` key of this protocol, the previous cell becomes two cells wide. This
+   affects only :code:`U+0E33 THAI CHARACTER SARA AM` and
+   :code:`U+0EB3 LAO VOWEL SIGN AM`.
 
 #. If there is a boundary, but the width of the current code point is zero,
    it is added to the previous cell and processing is finished.
@@ -440,12 +448,12 @@ described by the rules below, in order of decreasing priority:
 #. *Wide emoji*: Parse `emoji-sequences.txt
    <https://www.unicode.org/Public/emoji/latest/emoji-sequences.txt>`__ from
    the Unicode standard. All :code:`Basic_Emoji` have width two unless they are
-   followed by :code:`FE0F` in the file. The leading copdepoints in all
+   followed by :code:`FE0F` in the file. The leading codepoints in all
    :code:`RGI_Emoji_Modifier_Sequence` and :code:`RGI_Emoji_Tag_Sequence` have width two.
    All code points in :code:`RGI_Emoji_Flag_Sequence` have width two.
 
 #. *Marks*: These are all zero width code points. They are code points with Unicode
-   categories whose first letter is :code:`M` or :code:`S`. Additionally,
+   categories whose first letter is :code:`M`. Additionally,
    code points with Unicode category: :code:`Cf`. Finally, they include
    all modifier code points from :code:`RGI_Emoji_Modifier_Sequence` in the
    *Wide emoji* rule above.
@@ -458,20 +466,27 @@ Unicode variation selectors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 There are two code points (:code:`U+FE0E` and :code:`U+FE0F`) that can actually
-alter the width of the previous code point. When adding a code point to the
-previous cell these have to be handled specially.
+`alter the width of the previous code point <https://www.unicode.org/reports/tr11/#ED4>`__
+by changing their presentation between ``Emoji_Presentation`` and ``Text_Presentation``.
+When adding a code point to the previous cell these have to be handled specially.
 
 ``U+FE0E`` - Variation Selector 15
-  When the previous cell has width two and the last code point in the previous
+  When the previous cell is two cells wide, its width was not set explicitly using
+  the ``w`` key of this protocol, and the last code point in the previous
   cell is one of the ``Basic_Emoji`` code points from the *Wide emoji* rule above
-  that is *not* followed by ``FEOF`` then the width of the previous cell is
+  that is *not* followed by ``FE0F`` then the width of the previous cell is
   decreased to one.
 
 ``U+FE0F`` - Variation Selector 16
-  When the previous cell has width one and the last code point in the previous
-  cell is one of the ``Basic_Emoji`` code points from the *Wide emoji* rule above
-  that is followed by ``FEOF`` then the width of the
+  When the previous cell is a single, unscaled cell whose width was not set
+  explicitly using the ``w`` key of this protocol, and the last code point in the
+  previous cell is one of the ``Basic_Emoji`` code points from the *Wide emoji*
+  rule above that is followed by ``FE0F`` then the width of the
   previous cell is increased to two.
+
+In all three of these cases the width the application requested with the ``w`` key
+wins: a cell whose width was set explicitly is never re-sized by a variation
+selector or a spacing mark.
 
 Note that the rule for ``U+FE0E`` is particularly problematic for terminals as
 it means that the width of a string cannot be determined without knowing the
@@ -482,4 +497,36 @@ cell wide but it is *not* moved back to the previous line.
 
 To avoid this issue, it is recommended applications detect when ``U+FE0E`` is
 present and in such cases use the width part of the text sizing protocol
-to control rendering.
+to control rendering. Alternately, applications can segment text into graphemes
+and given a list of graphemes and their widths it is possible to write a simple
+function that will output them to the terminal so as to avoid this issue. Below
+is such a function in the Python language:
+
+.. code-block:: python
+
+    class Grapheme:
+        text: str
+        width: int
+
+    def output_one_line(iterator_over_graphemes):
+        ' Output graphemes so that they affect exactly wcswidth cells only (works for >= 2 graphemes) '
+        graphemes = tuple(iterator_over_graphemes)
+        if not graphemes:
+            return
+        yield graphemes[0].text
+        for i in range(1, len(graphemes)):
+            g = graphemes[i]
+            if i == len(graphemes) - 1:
+                prev_g = graphemes[i-1]
+                yield f'\x1b[{prev_g.width}D'  # move cursor back
+                yield g.text
+                yield f'\x1b[{g.width}D'  # move cursor back
+                yield f'\x1b[{prev_g.width}@'  # insert cells
+                yield prev_g.text
+                yield f'\x1b[{g.width}C'  # move cursor forward
+            else:
+                yield g.text
+
+Then, using ``wcswidth()`` the application can split long text into lines of
+width no more than the screen width and use the above function to write each
+line to the terminal robustly.

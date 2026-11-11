@@ -18,22 +18,39 @@ if [[ -n "$KITTY_BASH_INJECT" ]]; then
 
     if [[ -n "$ksi_val" && "$ksi_val" != *no-sudo* && -n "$TERMINFO" && ! ( -r "/usr/share/terminfo/x/xterm-kitty" || -r "/usr/share/terminfo/78/xterm-kitty" ) ]]; then
         # this must be done before sourcing user bashrc otherwise aliasing of sudo does not work
-        sudo() {
-            # Ensure terminfo is available in sudo
-            builtin local is_sudoedit="n"
-            for arg; do
-                if [[ "$arg" == "-e" || $arg == "--edit" ]]; then
-                    is_sudoedit="y"
-                    builtin break;
+            sudo() {
+                # Ensure terminfo is available in sudo
+                builtin local cannot_set_env_var="n"
+                builtin local ignore_arg="n"
+                for arg; do
+                    if [[ "$ignore_arg" == "y" ]]; then ignore_arg="n"; builtin continue; fi
+                    case "$arg" in
+                        --) builtin break ;;  # end of options
+                        # sudo -e disallows setting env vars
+                        --edit | -e* | -[!-]*e*) cannot_set_env_var="y"; builtin break ;;
+                        # sudo-rs -v disallows setting env vars
+                        --validate | -v* | -[!-]*v*) cannot_set_env_var="y"; builtin break ;;
+                        # flags that require a following argument
+                        --user|--group|--host|--chdir|--chroot|--role|--type|--command-timeout|--auth-type|--login-class|--prompt|--close-from|--other-user) ignore_arg="y" ;;
+                        --*) ;;  # misc long opt
+                        -*a|-*C|-*c|-*D|-*g|-*h|-*p|-*R|-*r|-*t|-*T|-*u) ignore_arg="y" ;;
+                        # flag or env var setting
+                        -* | *=*) ;;
+                        *) builtin break ;;  # command found
+                    esac
+                done
+                if [[ "$cannot_set_env_var" == "y" ]]; then
+                    builtin command sudo "$@";
+                else
+                    builtin command sudo TERMINFO="$TERMINFO" "$@";
                 fi
-                [[ "$arg" != -* && "$arg" != *=* ]] && builtin break  # command found
-            done
-            if [[ "$is_sudoedit" == "y" ]]; then
-                builtin command sudo "$@";
-            else
-                builtin command sudo TERMINFO="$TERMINFO" "$@";
+            }
+            if builtin type -P run0 >/dev/null 2>&1; then
+                run0() {
+                    # Ensure terminfo is available in run0, --setenv=NAME copies NAME from the current env
+                    builtin command run0 --setenv=TERMINFO "$@";
+                }
             fi
-        }
     fi
 
     if [[ "$kitty_bash_inject" == *"posix"* ]]; then
@@ -203,7 +220,7 @@ _ksi_main() {
         _ksi_prompt[ps0_suffix]+="\[\e[0 q\]"  # blinking default cursor
     fi
 
-    if [[ "${_ksi_prompt[title]}" == "y" ||  "${_ksi_prompt[mark]}" ]]; then
+    if [[ "${_ksi_prompt[title]}" == "y" || "${_ksi_prompt[mark]}" == "y" ]]; then
         _ksi_get_current_command() {
             builtin local last_cmd
             last_cmd=$(HISTTIMEFORMAT= builtin history 1)
@@ -225,7 +242,7 @@ _ksi_main() {
                 # connected to most SSH servers
                 # or use ssh kitten to connected to some SSH servers that do not set SSH_TTY
                 _ksi_prompt[hostname_prefix]="\h: "
-            elif [[ -n "$(builtin command -v who)" && "$(builtin command who -m 2> /dev/null)" =~ "\([a-fA-F.:0-9]+\)$" ]]; then
+            elif [[ -n "$(builtin command -v who)" && "$(builtin command who -m 2> /dev/null)" =~ \([a-fA-F.:0-9]+\)$ ]]; then
                 # the shell integration script is installed manually on the remote system
                 # the environment variables are cleared after sudo
                 # OpenSSH's sshd creates entries in utmp for every login so use those

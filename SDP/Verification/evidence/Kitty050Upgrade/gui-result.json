@@ -1,0 +1,14 @@
+{
+  "roundtrip": {
+    "exit_code": 0,
+    "stdout": "{\"result\": \"PASS\", \"tabs\": 2, \"panes\": 3, \"cwd_and_layout\": [[\"First\", \"splits\", [[\"/tmp/kitty-050-acceptance-t6jh0s5j/resume/one\", false], [\"/tmp/kitty-050-acceptance-t6jh0s5j/resume/two space\", true]]], [\"Second\", \"splits\", [[\"/tmp/kitty-050-acceptance-t6jh0s5j/resume/three\", true]]]], \"foreground_resume_argv\": true, \"catalog_registered\": true}\n"
+  },
+  "picker": {
+    "exit_code": 0,
+    "stdout": "cancel: PASS\nselect: PASS\ninvalid: PASS\n"
+  },
+  "resize": {
+    "exit_code": 0,
+    "stdout": "{\"result\": \"PASS\", \"shortcut\": \"Ctrl+Shift+R via XTest\", \"columns_before\": 99, \"columns_after\": 101, \"escape_closed_overlay\": true}\n"
+  }
+}

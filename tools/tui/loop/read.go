@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/kovidgoyal/go-parallel"
 	"github.com/kovidgoyal/kitty/tools/tty"
 	"github.com/kovidgoyal/kitty/tools/utils"
 )
@@ -44,6 +44,12 @@ func read_ignoring_temporary_errors(f *tty.Term, buf []byte) (int, error) {
 }
 
 func read_from_tty(pipe_r *os.File, term *tty.Term, results_channel chan<- []byte, err_channel chan<- error, quit_channel <-chan byte, leftover_channel chan<- []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			err := parallel.Format_stacktrace_on_panic(r, 1)
+			err_channel <- err
+		}
+	}()
 	keep_going := true
 	pipe_fd := int(pipe_r.Fd())
 	tty_fd := term.Fd()
@@ -104,28 +110,42 @@ func read_from_tty(pipe_r *os.File, term *tty.Term, results_channel chan<- []byt
 }
 
 func has_da1_response(s string) bool {
-	pat := regexp.MustCompile("\x1b\\[\\?[0-9:;]+c")
-	return pat.FindString(s) != ""
+	return utils.MustCompile("\x1b\\[\\?[0-9:;]+c").FindString(s) != ""
 }
 
-func read_until_primary_device_attributes_response(term *tty.Term, initial_bytes []byte, timeout time.Duration) {
-	s := strings.Builder{}
-	if initial_bytes != nil {
-		s.Write(initial_bytes)
+func do_roundtrip_to_terminal(term *tty.Term, timeout time.Duration) {
+	// ask for primary device attributes
+	for {
+		if err := term.WriteAllString("\x1b[c"); err != nil && !is_temporary_error(err) {
+			return
+		} else {
+			break
+		}
 	}
-	received := make(chan error)
+	s := strings.Builder{}
+	s.Grow(256)
+	received := make(chan error, 1)
 	go func() {
-		buf := make([]byte, 1024)
-		n, err := read_ignoring_temporary_errors(term, buf)
-		if n > 0 {
-			s.Write(buf[:n])
-			if has_da1_response(s.String()) {
-				received <- nil
+		defer func() {
+			if r := recover(); r != nil {
+				text := parallel.Format_stacktrace_on_panic(r, 1).Error()
+				received <- fmt.Errorf("%s", text)
+			}
+		}()
+		for {
+			buf := make([]byte, 1024)
+			n, err := read_ignoring_temporary_errors(term, buf)
+			if n > 0 {
+				s.Write(buf[:n])
+				if has_da1_response(s.String()) {
+					received <- nil
+					return
+				}
+			}
+			if err != nil {
+				received <- err
 				return
 			}
-		}
-		if err != nil {
-			received <- err
 		}
 	}()
 	select {

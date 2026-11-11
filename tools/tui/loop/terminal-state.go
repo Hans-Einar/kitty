@@ -31,6 +31,8 @@ const (
 	RESTORE_COLORS                = "\033[#Q"
 	DECSACE_DEFAULT_REGION_SELECT = "\033[*x"
 	CLEAR_SCREEN                  = "\033[H\033[2J"
+	POP_KEY_FLAGS                 = "\033[<u"
+	PUSH_KEY_FLAGS                = "\033[>u"
 )
 
 type CursorShapes uint
@@ -104,6 +106,12 @@ type TerminalStateOptions struct {
 	in_band_resize_notification      bool
 	focus_tracking                   bool
 	color_scheme_change_notification bool
+	// Set this to true to avoid doing a query response loop to the terminal at
+	// exit. This loop is needed for most kittens to ensure that in-flight
+	// responses such as in-band resize notifications, color queries, kitty
+	// keyboard events, etc. are not leaked to the shell. For some special
+	// purpose uses of the loop, this is not appropriate, hence this setting.
+	roundtrip_on_exit bool
 }
 
 func set_modes(sb *strings.Builder, modes ...Mode) {
@@ -151,7 +159,7 @@ func (self *TerminalStateOptions) SetStateEscapeCodes() string {
 		sb.WriteString("\033[>u")
 	case NO_KEYBOARD_STATE_CHANGE:
 	default:
-		sb.WriteString(fmt.Sprintf("\033[>%du", self.kitty_keyboard_mode))
+		fmt.Fprintf(&sb, "\033[>%du", self.kitty_keyboard_mode)
 	}
 	if self.mouse_tracking != NO_MOUSE_TRACKING {
 		sb.WriteString(MOUSE_SGR_PIXEL_MODE.EscapeCodeToSet())

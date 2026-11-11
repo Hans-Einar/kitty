@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-OPTIONS = '''\
+OPTIONS = """\
 --align
 type=choices
 choices=center,left,right
@@ -22,9 +22,16 @@ be positioned at the top left corner of the image, instead of on the line after 
 
 --scale-up
 type=bool-set
-When used in combination with :option:`--place` it will cause images that are
-smaller than the specified area to be scaled up to use as much of the specified
-area as possible.
+Cause images that are smaller than the specified area to be scaled up to use as much
+of the specified area as possible. The specified area depends on either the :option:`--place`
+or the :option:`--fit` options.
+
+
+--fit
+choices=width,height,both,none
+default=width
+When not using :option:`--place`, control how the image is scaled relative to the screen.
+You can have it fit in the screen width or height or both or neither.
 
 
 --background
@@ -45,6 +52,12 @@ type=bool-set
 Remove all images currently displayed on the screen. Note that
 this cannot work with terminal multiplexers such as tmux since
 only the multiplexer can know the position of the screen.
+
+
+--clear-all
+type=bool-set
+Remove all images from screen and scrollback. Note that with terminal
+multiplexers like tmux, this will move images from all panes.
 
 
 --transfer-mode
@@ -163,15 +176,15 @@ are used. Valid ids are from 1 to 4294967295. Numbers outside this range are aut
 type=bool-set
 By default, the cursor is moved to the next line after displaying an image. This option, prevents that. Should not be used
 when catting multiple images. Also has no effect when the :option:`--place` option is used.
-'''
+"""
 
 help_text = (
-        'A cat like utility to display images in the terminal.'
-        ' You can specify multiple image files and/or directories.'
-        ' Directories are scanned recursively for image files. If STDIN'
-        ' is not a terminal, image data will be read from it as well.'
-        ' You can also specify HTTP(S) or FTP URLs which will be'
-        ' automatically downloaded and displayed.'
+    'A cat like utility to display images in the terminal.'
+    ' You can specify multiple image files and/or directories.'
+    ' Directories are scanned recursively for image files. If STDIN'
+    ' is not a terminal, image data will be read from it as well.'
+    ' You can also specify HTTP(S) or FTP URLs which will be'
+    ' automatically downloaded and displayed.'
 )
 usage = 'image-file-or-url-or-directory ...'
 
@@ -182,6 +195,7 @@ elif __name__ == '__doc__':
     import sys
 
     from kitty.simple_cli_definitions import CompletionSpec
+
     cd = sys.cli_docs  # type: ignore
     cd['usage'] = usage
     cd['options'] = lambda: OPTIONS.format()

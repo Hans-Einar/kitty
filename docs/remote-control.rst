@@ -244,6 +244,12 @@ as shown below:
     def is_cmd_allowed(pcmd, window, from_socket, extra_data):
         cmd_name = pcmd['cmd']  # the name of the command
         cmd_payload = pcmd['payload']  # the arguments to the command
+        # window is the window the command was received from, it is None
+        # for commands received over a socket. extra_data['self_window'] is
+        # the window the command will treat as "self", for commands received
+        # over a socket, this is specified by the client and so is not trusted
+        # and can be None.
+        self_window = extra_data['self_window']
         # examine the cmd_name and cmd_payload and return True to allow
         # the command or False to disallow it. Return None to have no
         # effect on the command.
@@ -260,6 +266,12 @@ as shown below:
         # prints in this function go to the parent kitty process STDOUT
         print('Allowing launch command:', cmd_payload)
         return True
+
+
+.. note::
+
+    The payloads for the different remote control commands are documented in the
+    :doc:`remote control protocol specification <rc_protocol>`.
 
 
 .. _rc_mapping:
@@ -292,7 +304,8 @@ control commands as you like and process their output.
 :ac:`launch` command with ``--type=background --allow-remote-control``.
 For more advanced usage, including fine grained permissions, setting
 env vars, command line interpolation, passing data to STDIN, etc.
-the :doc:`launch <launch>` command should be used.
+the :doc:`launch <launch>` command should be used. Relative paths to scripts
+are interpreted with respect to the kitty config directory.
 
 .. note:: You do not need :opt:`allow_remote_control` to use these mappings,
    as they are not actual remote programs, but are simply a way to reuse the

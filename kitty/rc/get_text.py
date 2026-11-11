@@ -11,24 +11,27 @@ if TYPE_CHECKING:
 
 
 class GetText(RemoteCommand):
-
-    protocol_spec = __doc__ = '''
+    protocol_spec = __doc__ = """
     match/str: The window to get text from
-    extent/choices.screen.first_cmd_output_on_screen.last_cmd_output.last_visited_cmd_output.all.selection: \
+    extent/choices.screen.first_cmd_output_on_screen.last_cmd_output.last_visited_cmd_output.\
+last_non_empty_output.all.selection.alternate.alternate_scrollback: \
         One of :code:`screen`, :code:`first_cmd_output_on_screen`, :code:`last_cmd_output`, \
-        :code:`last_visited_cmd_output`, :code:`all`, or :code:`selection`
+        :code:`last_visited_cmd_output`, :code:`last_non_empty_output`, :code:`all`, \
+        :code:`selection`, :code:`alternate`, or :code:`alternate_scrollback`
     ansi/bool: Boolean, if True send ANSI formatting codes
     cursor/bool: Boolean, if True send cursor position/style as ANSI codes
     wrap_markers/bool: Boolean, if True add wrap markers to output
     clear_selection/bool: Boolean, if True clear the selection in the matched window
     self/bool: Boolean, if True use window the command was run in
-    '''
+    """
 
     short_desc = 'Get text from the specified window'
-    options_spec = MATCH_WINDOW_OPTION + '''\n
+    options_spec = (
+        MATCH_WINDOW_OPTION
+        + """\n
 --extent
 default=screen
-choices=screen, all, selection, first_cmd_output_on_screen, last_cmd_output, last_visited_cmd_output, last_non_empty_output
+choices=screen, all, selection, first_cmd_output_on_screen, last_cmd_output, last_visited_cmd_output, last_non_empty_output, alternate, alternate_scrollback
 What text to get. The default of :code:`screen` means all text currently on the screen.
 :code:`all` means all the screen+scrollback and :code:`selection` means the
 currently selected text. :code:`first_cmd_output_on_screen` means the output of the first
@@ -37,6 +40,9 @@ the output of the last command that was run in the window. :code:`last_visited_c
 the first command output below the last scrolled position via scroll_to_prompt.
 :code:`last_non_empty_output` is the output from the last command run in the window that had
 some non empty output. The last four require :ref:`shell_integration` to be enabled.
+:code:`alternate` means the text in the screen that is not currently visible (if the terminal
+is in the main screen this is the secondary/alternate screen and vice versa).
+:code:`alternate_scrollback` is the same but also includes the scrollback buffer (if any).
 
 
 --ansi
@@ -64,7 +70,8 @@ Clear the selection in the matched window, if any.
 --self
 type=bool-set
 Get text from the window this command is run in, rather than the active window.
-'''
+"""
+    )
 
     field_to_option_map = {'wrap_markers': 'add_wrap_markers', 'cursor': 'add_cursor'}
 
@@ -81,6 +88,7 @@ Get text from the window this command is run in, rather than the active window.
 
     def response_from_kitty(self, boss: Boss, window: Window | None, payload_get: PayloadGetType) -> ResponseType:
         from kitty.window import CommandOutput
+
         windows = self.windows_for_match_payload(boss, window, payload_get)
         if windows and windows[0]:
             window = windows[0]
@@ -111,6 +119,14 @@ Get text from the window this command is run in, rather than the active window.
                 CommandOutput.last_visited,
                 as_ansi=bool(payload_get('ansi')),
                 add_wrap_markers=bool(payload_get('wrap_markers')),
+            )
+        elif payload_get('extent') in ('alternate', 'alternate_scrollback'):
+            ans = window.as_text(
+                as_ansi=bool(payload_get('ansi')),
+                add_history=payload_get('extent') == 'alternate_scrollback',
+                add_cursor=bool(payload_get('cursor')),
+                add_wrap_markers=bool(payload_get('wrap_markers')),
+                alternate_screen=True,
             )
         else:
             ans = window.as_text(

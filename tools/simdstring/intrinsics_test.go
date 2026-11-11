@@ -48,7 +48,7 @@ func test_cmpeq_epi8(a, b []byte) []byte {
 func test_cmplt_epi8(t *testing.T, a, b []byte) []byte {
 	ans := make([]byte, len(a))
 	var prev []byte
-	for which := 0; which < 3; which++ {
+	for which := range 3 {
 		if len(ans) == 16 {
 			test_cmplt_epi8_asm_128(a, b, which, ans)
 		} else {
@@ -161,7 +161,7 @@ func TestSIMDStringOps(t *testing.T) {
 	}
 	// test alignment issues
 	q := []byte("abc")
-	for sz := 0; sz < 32; sz++ {
+	for sz := range 32 {
 		test(q, '<', '>', sz)
 		test(q, ' ', 'b', sz)
 		test(q, '<', 'a', sz)
@@ -172,7 +172,7 @@ func TestSIMDStringOps(t *testing.T) {
 	tests := func(h string, a, b byte) {
 		for _, sz := range []int{0, 16, 32, 64, 79} {
 			q := strings.Repeat(" ", sz) + h
-			for sz := 0; sz < 32; sz++ {
+			for sz := range 32 {
 				test([]byte(q), a, b, sz)
 			}
 		}
@@ -243,6 +243,65 @@ func TestSIMDStringOps(t *testing.T) {
 	}
 	index_test([]byte("abc"), 'x')
 	index_test([]byte("abc"), 'b')
+
+	not_index_test := func(haystack []byte, needle byte) {
+		var actual int
+		expected := not_index_byte_scalar(haystack, needle)
+
+		for _, sz := range sizes {
+			switch sz {
+			case 16:
+				actual = not_index_byte_asm_128(haystack, needle)
+			case 32:
+				actual = not_index_byte_asm_256(haystack, needle)
+			}
+			if actual != expected {
+				t.Fatalf("not_index failed in: %#v (%d != %d) at size: %d with needle: %#v", string(haystack), expected, actual, sz, needle)
+			}
+		}
+	}
+	not_index_test(nil, 'a')
+	not_index_test([]byte{}, 'a')
+	not_index_test([]byte("aaa"), 'a')
+	not_index_test([]byte("aaab"), 'a')
+	not_index_test([]byte("baaa"), 'a')
+	not_index_test([]byte("abc"), 'a')
+	for _, sz := range []int{0, 16, 32, 64, 79} {
+		q := strings.Repeat("a", sz) + "b"
+		not_index_test([]byte(q), 'a')
+		not_index_test([]byte(q), 'b')
+		not_index_test([]byte(strings.Repeat("a", sz)), 'a')
+	}
+
+	not_index2_test := func(haystack []byte, a, b byte) {
+		var actual int
+		expected := not_index_byte2_scalar(haystack, a, b)
+
+		for _, sz := range sizes {
+			switch sz {
+			case 16:
+				actual = not_index_byte2_asm_128(haystack, a, b)
+			case 32:
+				actual = not_index_byte2_asm_256(haystack, a, b)
+			}
+			if actual != expected {
+				t.Fatalf("not_index2 failed in: %#v (%d != %d) at size: %d with needles: %#v %#v", string(haystack), expected, actual, sz, a, b)
+			}
+		}
+	}
+	not_index2_test(nil, 'a', 'b')
+	not_index2_test([]byte{}, 'a', 'b')
+	not_index2_test([]byte("aabb"), 'a', 'b')
+	not_index2_test([]byte("aabbc"), 'a', 'b')
+	not_index2_test([]byte("caabb"), 'a', 'b')
+	for _, sz := range []int{0, 16, 32, 64, 79} {
+		q := strings.Repeat("ab", sz) + "c"
+		not_index2_test([]byte(q), 'a', 'b')
+		not_index2_test([]byte(strings.Repeat("ab", sz)), 'a', 'b')
+		for align := range 32 {
+			not_index2_test([]byte(strings.Repeat(" ", align)+q), 'a', 'b')
+		}
+	}
 
 }
 
@@ -326,7 +385,7 @@ func TestIntrinsics(t *testing.T) {
 		if e := test_jump_if_zero(a); e != 0 {
 			t.Fatalf("Did not detect zero register")
 		}
-		for i := 0; i < sz; i++ {
+		for i := range sz {
 			a = make([]byte, sz)
 			a[i] = 1
 			if e := test_jump_if_zero(a); e != 1 {
@@ -340,7 +399,7 @@ func TestIntrinsics(t *testing.T) {
 		if e := test_count_to_match(a, 77); e != -1 {
 			t.Fatalf("Unexpectedly found byte at: %d", e)
 		}
-		for i := 0; i < sz; i++ {
+		for i := range sz {
 			if e := test_count_to_match(a, byte(i)); e != i {
 				t.Fatalf("Failed to find the byte: %d (%d != %d)", i, i, e)
 			}

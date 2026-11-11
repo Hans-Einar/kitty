@@ -16,9 +16,11 @@ import (
 	"github.com/kovidgoyal/kitty/tools/ignorefiles"
 	"github.com/kovidgoyal/kitty/tools/tty"
 	"github.com/kovidgoyal/kitty/tools/tui"
+	"github.com/kovidgoyal/kitty/tools/tui/graphics"
 	"github.com/kovidgoyal/kitty/tools/tui/loop"
 	"github.com/kovidgoyal/kitty/tools/tui/readline"
 	"github.com/kovidgoyal/kitty/tools/utils"
+	"github.com/kovidgoyal/kitty/tools/utils/shlex"
 	"golang.org/x/text/message"
 )
 
@@ -42,6 +44,7 @@ const (
 	SELECT_SAVE_DIR
 	SELECT_SINGLE_DIR
 	SELECT_MULTIPLE_DIRS
+	SELECT_ANY
 )
 
 func (m Mode) CanSelectNonExistent() bool {
@@ -92,6 +95,8 @@ func (m Mode) WindowTitle() string {
 		return "Choose one or more directories"
 	case SELECT_SAVE_FILES:
 		return "Choose files to save"
+	case SELECT_ANY:
+		return "Choose an existing file or directory"
 	}
 	return ""
 }
@@ -123,6 +128,7 @@ type State struct {
 	display_title                       bool
 	pygments_style, dark_pygments_style string
 	syntax_aliases                      map[string]string
+	max_disk_cache_size                 int64
 
 	selections    []string
 	current_idx   CollectionIndex
@@ -131,6 +137,7 @@ type State struct {
 	redraw_needed bool
 }
 
+func (s State) DiskCacheSize() int64                  { return s.max_disk_cache_size }
 func (s State) HighlightStyles() (string, string)     { return s.pygments_style, s.dark_pygments_style }
 func (s State) SyntaxAliases() map[string]string      { return s.syntax_aliases }
 func (s State) DisplayTitle() bool                    { return s.display_title }
@@ -204,16 +211,32 @@ type ScreenSize struct {
 }
 
 type Handler struct {
-	state            State
-	screen_size      ScreenSize
-	result_manager   *ResultManager
-	lp               *loop.Loop
-	rl               *readline.Readline
-	err_chan         chan error
-	shortcut_tracker config.ShortcutTracker
-	msg_printer      *message.Printer
-	spinner          *tui.Spinner
-	preview_manager  *PreviewManager
+	state                              State
+	screen_size                        ScreenSize
+	result_manager                     *ResultManager
+	lp                                 *loop.Loop
+	rl                                 *readline.Readline
+	search_rl                          *readline.Readline
+	err_chan                           chan error
+	shortcut_tracker                   config.ShortcutTracker
+	msg_printer                        *message.Printer
+	spinner                            *tui.Spinner
+	preview_manager                    *PreviewManager
+	last_rendered_preview              Preview
+	last_rendered_preview_abspath      string
+	prev_preview_for_smooth_transition Preview
+	graphics_handler                   GraphicsHandler
+}
+
+func (self *Handler) on_escape_code(etype loop.EscapeCodeType, payload []byte) error {
+	switch etype {
+	case loop.APC:
+		gc := graphics.GraphicsCommandFromAPC(payload)
+		if gc != nil {
+			return self.graphics_handler.HandleGraphicsCommand(gc)
+		}
+	}
+	return nil
 }
 
 func (h *Handler) draw_screen() (err error) {
@@ -222,15 +245,8 @@ func (h *Handler) draw_screen() (err error) {
 	defer func() {
 		h.state.mouse_state.UpdateHoveredIds()
 		h.state.mouse_state.ApplyHoverStyles(h.lp)
-		h.lp.EndAtomicUpdate()
-	}()
-	h.lp.ClearScreen()
-	h.state.mouse_state.ClearCellRegions()
-	switch h.state.screen {
-	case NORMAL:
-		matches, is_complete := h.get_results()
-		h.lp.SetWindowTitle(h.state.WindowTitle())
-		defer func() { // so that the cursor ends up in the right place
+		h.graphics_handler.ApplyPlacements(h.lp)
+		if h.state.screen == NORMAL { // so that the cursor ends up in the right place
 			h.lp.MoveCursorTo(1, 1)
 			if h.state.DisplayTitle() {
 				h.lp.Println(h.state.WindowTitle())
@@ -238,7 +254,16 @@ func (h *Handler) draw_screen() (err error) {
 			} else {
 				h.draw_search_bar(0)
 			}
-		}()
+		}
+		h.lp.EndAtomicUpdate()
+	}()
+	h.lp.ClearScreenButNotGraphics()
+	h.graphics_handler.ClearPlacements(h.lp)
+	h.state.mouse_state.ClearCellRegions()
+	switch h.state.screen {
+	case NORMAL:
+		matches, is_complete := h.get_results()
+		h.lp.SetWindowTitle(h.state.WindowTitle())
 		y := SEARCH_BAR_HEIGHT + utils.IfElse(h.state.DisplayTitle(), 1, 0)
 		footer_height, err := h.draw_footer()
 		if err != nil {
@@ -251,6 +276,38 @@ func (h *Handler) draw_screen() (err error) {
 	return
 }
 
+type previewer struct {
+	cmdline      []string
+	pattern      string
+	use_mimetype bool
+}
+
+func (p previewer) matches(fname, mt string) bool {
+	q := utils.IfElse(p.use_mimetype, mt, fname)
+	matched, err := filepath.Match(p.pattern, q)
+	return matched && err == nil
+}
+
+var previewers []previewer
+
+func load_previewers(cfg *Config) (err error) {
+	for _, spec := range cfg.Previewer {
+		parts, err := shlex.Split(spec)
+		if err != nil {
+			return fmt.Errorf("invalid previewer specification: %#v with error: %w", spec, err)
+		}
+		if len(parts) < 2 {
+			return fmt.Errorf("invalid previewer specification: %#v with error: no command specified", spec)
+		}
+		prefix, pattern, found := strings.Cut(parts[0], ":")
+		if !found {
+			return fmt.Errorf("invalid previewer specification: %#v with error: no prefix in pattern specification", spec)
+		}
+		previewers = append(previewers, previewer{parts[1:], pattern, prefix == "mime"})
+	}
+	return
+}
+
 func load_config(opts *Options) (ans *Config, err error) {
 	ans = NewConfig()
 	p := config.ConfigParser{LineHandler: ans.Parse}
@@ -259,6 +316,35 @@ func load_config(opts *Options) (ans *Config, err error) {
 		return nil, err
 	}
 	ans.KeyboardShortcuts = config.ResolveShortcuts(ans.KeyboardShortcuts)
+	parts, err := shlex.Split(ans.Video_preview)
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range parts {
+		k, v, found := strings.Cut(x, "=")
+		if !found {
+			return nil, fmt.Errorf("invalid value %s in video_preview", x)
+		}
+		var i uint64
+		switch k {
+		case "duration":
+			if video_duration, err = strconv.ParseFloat(v, 64); err != nil {
+				return nil, fmt.Errorf("invalid %s in video_preview: %s", k, v)
+			}
+		case "fps":
+			if i, err = strconv.ParseUint(v, 10, 0); err != nil {
+				return nil, fmt.Errorf("invalid %s in video_preview: %s", k, v)
+			}
+			video_fps = int(i)
+		case "width":
+			if i, err = strconv.ParseUint(v, 10, 0); err != nil {
+				return nil, fmt.Errorf("invalid %s in video_preview: %s", k, v)
+			}
+			video_width = int(i)
+		default:
+			return nil, fmt.Errorf("unrecognized key in video_preview: %s", k)
+		}
+	}
 	return ans, nil
 }
 
@@ -270,6 +356,7 @@ func (h *Handler) init_sizes(new_size loop.ScreenSize) {
 	h.screen_size.width_px = int(new_size.WidthPx)
 	h.screen_size.height_px = int(new_size.HeightPx)
 	h.rl.ClearCachedScreenSize()
+	h.search_rl.ClearCachedScreenSize()
 }
 
 func (h *Handler) OnInitialize() (ans string, err error) {
@@ -288,12 +375,15 @@ func (h *Handler) OnInitialize() (ans string, err error) {
 				if (s.IsDir() && h.state.mode != SELECT_SAVE_FILE) || (!s.IsDir() && h.state.mode == SELECT_SAVE_FILE) {
 					h.state.SetCurrentDir(filepath.Dir(h.state.suggested_save_file_path))
 					h.state.SetSearchText(filepath.Base(h.state.suggested_save_file_name))
+					h.search_rl.SetText(h.state.SearchText())
 				}
 			}
 		}
 	}
+	err = h.graphics_handler.Initialize(h.lp)
 	h.result_manager.set_root_dir()
 	h.draw_screen()
+	h.lp.SendOverlayReady()
 	return
 }
 
@@ -307,7 +397,11 @@ func (h *Handler) current_abspath() string {
 }
 
 func (s *State) CanSelect(r *ResultItem) bool {
-	return utils.IfElse(s.OnlyDirs(), r.ftype.IsDir(), !r.ftype.IsDir())
+	if s.mode == SELECT_ANY {
+		return true
+	}
+	is_dir := is_directory(r.ftype)
+	return utils.IfElse(s.OnlyDirs(), is_dir, !is_dir)
 }
 
 func (h *Handler) toggle_selection_at(idx CollectionIndex) bool {
@@ -336,6 +430,7 @@ func (h *Handler) toggle_selection() bool {
 func (h *Handler) change_current_dir(dir string) {
 	if dir != h.state.CurrentDir() {
 		h.state.SetCurrentDir(dir)
+		h.search_rl.ResetText()
 		h.result_manager.set_root_dir()
 		h.state.last_render = render_state{}
 	}
@@ -394,6 +489,26 @@ func (h *Handler) switch_to_save_file_name_mode() error {
 	name := h.state.suggested_save_file_name
 	if h.state.SearchText() != "" {
 		name = h.state.SearchText()
+	}
+	if name == "" {
+		name = h.current_abspath()
+		if name != "" {
+			if r, err := filepath.Rel(h.state.CurrentDir(), name); err == nil {
+				name = r
+			}
+		}
+	}
+	h.initialize_save_file_name(name)
+	return h.draw_screen()
+}
+
+func (h *Handler) switch_to_save_file_name_mode_based_on_existing() error {
+	name := h.current_abspath()
+	if name == "" {
+		return h.switch_to_save_file_name_mode()
+	}
+	if r, err := filepath.Rel(h.state.CurrentDir(), name); err == nil {
+		name = r
 	}
 	h.initialize_save_file_name(name)
 	return h.draw_screen()
@@ -481,13 +596,19 @@ func (h *Handler) dispatch_action(name, args string) (err error) {
 		}
 	case "typename":
 		if !h.state.mode.CanSelectNonExistent() {
-			if h.state.mode.OnlyDirs() {
+			if h.state.mode.OnlyDirs() || h.state.mode == SELECT_ANY {
 				h.state.AddSelection(h.state.CurrentDir())
 				return h.finish_selection()
 			}
 			h.lp.Beep()
 		} else {
 			return h.switch_to_save_file_name_mode()
+		}
+	case "modifyname":
+		if h.state.mode.CanSelectNonExistent() {
+			return h.switch_to_save_file_name_mode_based_on_existing()
+		} else {
+			h.lp.Beep()
 		}
 	case "toggle":
 		switch args {
@@ -548,14 +669,19 @@ func (h *Handler) dispatch_action(name, args string) (err error) {
 func (h *Handler) OnKeyEvent(ev *loop.KeyEvent) (err error) {
 	switch h.state.screen {
 	case NORMAL:
-		if h.handle_edit_keys(ev) {
-			ev.Handled = true
-			h.draw_screen()
-		}
 		ac := h.shortcut_tracker.Match(ev, h.state.keyboard_shortcuts)
 		if ac != nil {
 			ev.Handled = true
+			if rlac, is_edit_action := edit_actions[ac.Name]; is_edit_action {
+				if err = h.perform_edit_action(rlac); err == nil {
+					err = h.draw_screen()
+				}
+				return
+			}
 			return h.dispatch_action(ac.Name, ac.Args)
+		}
+		if err = h.forward_key_event_to_search_rl(ev); err == nil {
+			err = h.draw_screen()
 		}
 	case SAVE_FILE:
 		err = h.save_file_name_handle_key(ev)
@@ -577,8 +703,10 @@ func (h *Handler) OnMouseEvent(event *loop.MouseEvent) (err error) {
 func (h *Handler) OnText(text string, from_key_event, in_bracketed_paste bool) (err error) {
 	switch h.state.screen {
 	case NORMAL:
-		h.set_query(h.state.SearchText() + text)
-		return h.draw_screen()
+		if err = h.search_rl.OnText(text, from_key_event, in_bracketed_paste); err == nil {
+			h.set_query(h.search_rl.AllText())
+			err = h.draw_screen()
+		}
 	case SAVE_FILE:
 		if err = h.rl.OnText(text, from_key_event, in_bracketed_paste); err == nil {
 			err = h.draw_screen()
@@ -620,6 +748,8 @@ func (h *Handler) set_state_from_config(conf *Config, opts *Options) (err error)
 		h.state.mode = SELECT_SINGLE_FILE
 	case "files":
 		h.state.mode = SELECT_MULTIPLE_FILES
+	case "all":
+		h.state.mode = SELECT_ANY
 	case "save-file":
 		h.state.mode = SELECT_SAVE_FILE
 	case "dir":
@@ -718,13 +848,34 @@ func (h *Handler) set_state_from_config(conf *Config, opts *Options) (err error)
 	h.state.pygments_style = conf.Pygments_style
 	h.state.dark_pygments_style = conf.Dark_pygments_style
 	h.state.syntax_aliases = conf.Syntax_aliases
+	h.state.max_disk_cache_size = int64(conf.Cache_size * (1024 * 1024 * 1024))
 	return
 }
 
 var default_cwd string
 var use_light_colors bool
 
+func shell_output(selections []string) string {
+	return strings.Join(utils.Map(shlex.Quote, selections), " ")
+}
+
+func for_shell_relative(x string) string {
+	if rel, is_under, err := utils.RelativeIfUnder(default_cwd, x, false); err == nil && is_under {
+		x = rel
+	}
+	return shlex.Quote(x)
+}
+
 func main(_ *cli.Command, opts *Options, args []string) (rc int, err error) {
+	if opts.ClearCache {
+		c, err := preview_cache()
+		if err != nil {
+			return 1, err
+		}
+		if err = c.Clear(); err != nil {
+			return 1, err
+		}
+	}
 	write_output := func(selections []string, interrupted bool, current_filter string) {
 		payload := make(map[string]any)
 		if err != nil {
@@ -749,23 +900,41 @@ func main(_ *cli.Command, opts *Options, args []string) (rc int, err error) {
 			}
 			return
 		}
-		m := strings.Join(selections, "\n")
-		fmt.Print(m)
-		if opts.WriteOutputTo != "" {
-			if opts.OutputFormat == "json" {
-				payload["paths"] = selections
-				if current_filter != "" {
-					payload["current_filter"] = current_filter
-				}
+		payload["paths"] = selections
+		if current_filter != "" {
+			payload["current_filter"] = current_filter
+		}
+		if tui.RunningAsUI() {
+			fmt.Println(tui.KittenOutputSerializer()(payload))
+		} else {
+			var m string
+			switch opts.OutputFormat {
+			case "shell":
+				m = shell_output(selections)
+			case "shell-relative":
+				m = strings.Join(utils.Map(for_shell_relative, selections), " ")
+			case "text":
+				m = strings.Join(selections, "\n")
+			case "json":
 				b, _ := json.MarshalIndent(payload, "", "  ")
 				m = string(b)
 			}
-			os.WriteFile(opts.WriteOutputTo, []byte(m), 0600)
+			os.Stdout.Write(utils.UnsafeStringToBytes(m))
+			if tty.IsTerminal(os.Stdout.Fd()) && opts.OutputFormat == "text" {
+				// Avoid zsh's silly no trailing newline marker
+				os.Stdout.WriteString("\n")
+			}
+			if opts.WriteOutputTo != "" {
+				os.WriteFile(opts.WriteOutputTo, utils.UnsafeStringToBytes(m), 0600)
+			}
 		}
 	}
 
 	conf, err := load_config(opts)
 	if err != nil {
+		return 1, err
+	}
+	if err = load_previewers(conf); err != nil {
 		return 1, err
 	}
 	lp, err := loop.New()
@@ -775,9 +944,23 @@ func main(_ *cli.Command, opts *Options, args []string) (rc int, err error) {
 	lp.MouseTrackingMode(loop.FULL_MOUSE_TRACKING)
 	lp.ColorSchemeChangeNotifications()
 	handler := Handler{lp: lp, err_chan: make(chan error, 8), msg_printer: message.NewPrinter(utils.LanguageTag()), spinner: tui.NewSpinner("dots")}
+	defer handler.graphics_handler.Cleanup()
+	defer calibre_cleanup()
+	getcwd := func() string {
+		ans := handler.state.CurrentDir()
+		if ans == "" {
+			var err error
+			ans, err = os.Getwd()
+			if err != nil {
+				ans = "."
+			}
+		}
+		return ans
+	}
 	handler.rl = readline.New(lp, readline.RlInit{
-		Prompt: "> ", ContinuationPrompt: ". ", Completer: FilePromptCompleter(handler.state.CurrentDir),
+		Prompt: "> ", ContinuationPrompt: ". ", Completer: FilePromptCompleter(getcwd),
 	})
+	handler.search_rl = readline.New(lp, readline.RlInit{DontMarkPrompts: true})
 	if err = handler.set_state_from_config(conf, opts); err != nil {
 		return 1, err
 	}
@@ -810,8 +993,13 @@ func main(_ *cli.Command, opts *Options, args []string) (rc int, err error) {
 		lp.RequestCurrentColorScheme()
 		return handler.OnInitialize()
 	}
+	lp.OnFinalize = func() string {
+		handler.graphics_handler.Finalize(lp)
+		return ""
+	}
 	lp.OnResize = func(old, new_size loop.ScreenSize) (err error) {
 		handler.init_sizes(new_size)
+		handler.clear_cached_previews()
 		return handler.draw_screen()
 	}
 	lp.OnColorSchemeChange = func(p loop.ColorPreference) (err error) {
@@ -826,6 +1014,7 @@ func main(_ *cli.Command, opts *Options, args []string) (rc int, err error) {
 	lp.OnKeyEvent = handler.OnKeyEvent
 	lp.OnText = handler.OnText
 	lp.OnMouseEvent = handler.OnMouseEvent
+	lp.OnEscapeCode = handler.on_escape_code
 	lp.OnWakeup = func() (err error) {
 		select {
 		case err = <-handler.err_chan:

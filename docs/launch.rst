@@ -27,6 +27,11 @@ To open the new window in a new tab::
 
     map f1 launch --type=tab
 
+To open a window docked to the bottom of the active window, using ten lines,
+see :ref:`docks`::
+
+    map f1 launch --type=window-dock --dock-edge=bottom --dock-size=10
+
 To run multiple commands in a shell, use::
 
     map f1 launch sh -c "ls && exec zsh"
@@ -130,7 +135,7 @@ create :file:`~/.config/kitty/mywatcher.py` and use :option:`launch --watcher` =
 
     def on_load(boss: Boss, data: dict[str, Any]) -> None:
         # This is a special function that is called just once when this watcher
-        # module is first loaded, can be used to perform any initializztion/one
+        # module is first loaded, can be used to perform any initialization/one
         # time setup. Any exceptions in this function are printed to kitty's
         # STDERR but otherwise ignored.
         ...
@@ -168,6 +173,13 @@ create :file:`~/.config/kitty/mywatcher.py` and use :option:`launch --watcher` =
         # data will contain is_start, cmdline and time.
         ...
 
+    def on_program_status_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
+        # called when the program status (OSC 7501) records of the window
+        # change. Here data will contain program_status, the list of current
+        # records, each a dict with keys: id, state, kind, progress, app,
+        # title and msg.
+        ...
+
     def on_color_scheme_preference_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
         # called when the color scheme preference of this window changes from
         # light to dark or vice versa. data contains is_dark and via_escape_code
@@ -183,6 +195,14 @@ create :file:`~/.config/kitty/mywatcher.py` and use :option:`launch --watcher` =
         # watchers defined in kitty.conf or using the --watcher command line
         # flag. data contains tab_manager which is the object responsible for
         # managing all tabs in a single OS Window.
+        ...
+
+    def on_quit(boss: Boss, window: Window, data: dict[str, Any]) -> None:
+        # called when kitty is about to quit. This is called in *global watchers*
+        # only. It is called twice: once before the quit confirmation dialog is
+        # shown (data['confirmed'] will be False) and once after the user has
+        # confirmed quitting (data['confirmed'] will be True). Setting
+        # data['aborted'] to True will abort the quit in both cases.
         ...
 
 

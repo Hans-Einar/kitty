@@ -1,0 +1,26 @@
+  Py 73/733  Go 0  [0.3s]
+  Py 146/733  Go 0  [6.9s]
+  Py 219/733  Go 17  [22.3s]
+  Py 292/733  Go 70  [23.2s]
+  Py 294/733  Go 70  [23.2s]
+  Py 365/733  Go 78  [29.3s]
+  Py 424/733  Go 78  [33.8s]
+  Py 438/733  Go 78  [35.7s]
+  Py 511/733  Go 78  [41.6s]
+  Py 578/733  Go 78  [43.0s]
+  Py 578/733  Go 664 ✓  [93.2s]
+  Py 584/733  Go 664 ✓  [112.2s]
+  Py 657/733  Go 664 ✓  [113.9s]
+  Py 730/733  Go 664 ✓  [115.6s]
+  Py 733/733 ✓  Go 664 ✓  [115.9s]
+----------------------------------------------------------------------
+Ran 1397 tests in 115.934s
+
+Slowest tests:
+  106.281s  [Py] test_all_custom_shaders_compile (kitty_tests.slang.TestSlang.test_all_custom_shaders_compile)
+  18.145s  [Py] test_build_custom_shader_pipeline_glsl (kitty_tests.slang.TestSlang.test_build_custom_shader_pipeline_glsl)
+  11.055s  [Py] test_ssh_shell_integration (kitty_tests.ssh.SSHKitten.test_ssh_shell_integration)
+  6.904s  [Py] test_ssh_copy_directory_permissions (kitty_tests.ssh.SSHKitten.test_ssh_copy_directory_permissions)
+  6.187s  [Py] test_ssh_login_shell_detection (kitty_tests.ssh.SSHKitten.test_ssh_login_shell_detection)
+
+OK (skipped=12)

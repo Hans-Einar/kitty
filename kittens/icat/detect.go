@@ -8,11 +8,11 @@ import (
 	"os"
 	"time"
 
+	shm "github.com/kovidgoyal/go-shm/v2"
 	"github.com/kovidgoyal/kitty/tools/tui/graphics"
 	"github.com/kovidgoyal/kitty/tools/tui/loop"
 	"github.com/kovidgoyal/kitty/tools/utils"
 	"github.com/kovidgoyal/kitty/tools/utils/images"
-	"github.com/kovidgoyal/kitty/tools/utils/shm"
 )
 
 var _ = fmt.Print
@@ -21,7 +21,7 @@ func DetectSupport(timeout time.Duration) (memory, files, direct bool, err error
 	temp_files_to_delete := make([]string, 0, 8)
 	shm_files_to_delete := make([]shm.MMap, 0, 8)
 	var direct_query_id, file_query_id, memory_query_id uint32
-	lp, e := loop.New(loop.NoAlternateScreen, loop.NoRestoreColors, loop.NoMouseTracking, loop.NoInBandResizeNotifications)
+	lp, e := loop.NewForSimpleInteraction()
 	if e != nil {
 		err = e
 		return

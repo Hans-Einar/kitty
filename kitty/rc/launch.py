@@ -18,8 +18,7 @@ if TYPE_CHECKING:
 
 
 class Launch(RemoteCommand):
-
-    protocol_spec = __doc__ = '''
+    protocol_spec = __doc__ = """
     args+/list.str: The command line to run in the new window, as a list, use an empty list to run the default shell
     match/str: The tab to open the new window in
     next_to/str: The window next to which to create the new window or empty string to use active window
@@ -31,13 +30,17 @@ class Launch(RemoteCommand):
     var/list.str: List of user variables of the form NAME=VALUE
     os_panel/list.str: List of panel settings
     tab_title/str: Title for the new tab
-    type/choices.window.tab.os-window.os-panel.overlay.overlay-main.background.clipboard.primary: The type of window to open
+    type/choices.window.window-dock.tab.tab-dock.os-window.os-panel.overlay.overlay-main.background.clipboard.primary: The type of window to open
+    dock_edge/choices.left.top.right.bottom: The edge at which to place a docked window
+    dock_size/str: The size of a docked window as a number of cells or a percentage
+    dock_skip_focus/bool: Boolean indicating whether the docked window should never get keyboard focus
     keep_focus/bool: Boolean indicating whether the current window should retain focus or not
+    focus_existing/str: Match expression for an existing window/tab to focus instead of launching
     copy_colors/bool: Boolean indicating whether to copy the colors from the current window
     copy_cmdline/bool: Boolean indicating whether to copy the cmdline from the current window
     copy_env/list.str=copy_local_env: List of strings representing the local env vars
     hold/bool: Boolean indicating whether to keep window open after cmd exits
-    location/choices.first.after.before.neighbor.last.vsplit.hsplit.split.default: Where in the tab to open the new window
+    location/choices.first.after.before.neighbor.last.vsplit.hsplit.split.by-title.default: Where in the tab to open the new window
     allow_remote_control/bool: Boolean indicating whether to allow remote control from the new window
     remote_control_password/list.str: A list of remote control passwords
     stdin_source/choices.none.@selection.@screen.@screen_scrollback.@alternate.@alternate_scrollback.\
@@ -54,12 +57,13 @@ class Launch(RemoteCommand):
     os_window_name/str: WM_NAME for OS Window
     os_window_class/str: WM_CLASS for OS Window
     os_window_state/choices.normal.fullscreen.maximized.minimized: The initial state for OS Window
+    os_window_position/str: The position for OS Window
     color/list.str: list of color specifications such as foreground=red
     watcher/list.str: list of paths to watcher files
     bias/float: The bias with which to create the new window in the current layout
     wait_for_child_to_exit/bool: Boolean indicating whether to wait and return child exit code
     hold_after_ssh/bool: Boolean indicating whether to run a local shell after exiting the ssh session cloned via cwd=current or similar
-    '''
+    """
 
     short_desc = 'Run an arbitrary process in a new window/tab'
     desc = (
@@ -68,11 +72,14 @@ class Launch(RemoteCommand):
         ' are provided, the default shell is run. For example::\n\n'
         '    kitten @ launch --title=Email mutt'
     )
-    options_spec = MATCH_TAB_OPTION + '\n\n' + '''\
+    options_spec = (
+        MATCH_TAB_OPTION
+        + '\n\n'
+        + """\
 --wait-for-child-to-exit
 type=bool-set
 Wait until the launched program exits and print out its exit code. The exit code is
-printed out instead of the window id. If the program exited nromally its exit code is printed, which
+printed out instead of the window id. If the program exited normally its exit code is printed, which
 is always greater than or equal to zero. If the program was killed by a signal, the symbolic name
 of the SIGNAL is printed, if available, otherwise the signal number with a leading minus sign is printed.
 
@@ -93,9 +100,13 @@ Do not print out the id of the newly created window.
 type=bool-set
 If specified the tab containing the window this command is run in is used
 instead of the active tab
-    ''' + '\n\n' + launch_options_spec().replace(':option:`launch', ':option:`kitten @ launch')
-    args = RemoteCommand.Args(spec='[CMD ...]', json_field='args', completion=RemoteCommand.CompletionSpec.from_string(
-        'type:special group:cli.CompleteExecutableFirstArg'))
+    """
+        + '\n\n'
+        + launch_options_spec().replace(':option:`launch', ':option:`kitten @ launch')
+    )
+    args = RemoteCommand.Args(
+        spec='[CMD ...]', json_field='args', completion=RemoteCommand.CompletionSpec.from_string('type:special group:cli.CompleteExecutableFirstArg')
+    )
     is_asynchronous = True
 
     def message_to_kitty(self, global_opts: RCOptions, opts: 'CLIOptions', args: ArgsType) -> PayloadType:
@@ -132,30 +143,43 @@ instead of the active tab
         if tabs and tabs[0]:
             target_tab = tabs[0]
 
+        # Create responder before defining callback to avoid closure issue
+        responder = None
+        if payload_get('wait_for_child_to_exit') and not payload_get('no_response'):
+            responder = self.create_async_responder(payload_get, window)
+
         def on_child_death(exit_status: int, exc: Exception | None) -> None:
             code = os.waitstatus_to_exitcode(exit_status)
             ans = str(code)
             if code < 0:
                 try:
                     from signal import Signals
+
                     ans = Signals(-code).name
                 except ValueError:
                     pass
-            responder.send_data(ans)
+            if responder is not None:
+                responder.send_data(ans)
 
         w = do_launch(
-            boss, opts, payload_get('args') or [], target_tab=target_tab, rc_from_window=window, base_env=base_env,
-            child_death_callback=on_child_death if payload_get('wait_for_child_to_exit') and not payload_get('no_response') else None)
+            boss,
+            opts,
+            payload_get('args') or [],
+            target_tab=target_tab,
+            rc_from_window=window,
+            base_env=base_env,
+            child_death_callback=on_child_death if payload_get('wait_for_child_to_exit') and not payload_get('no_response') else None,
+        )
         if payload_get('no_response'):
             return None
 
         if not payload_get('wait_for_child_to_exit'):
             return str(0 if w is None else w.id)
 
-        responder = self.create_async_responder(payload_get, window)
         return AsyncResponse()
 
     def cancel_async_request(self, boss: 'Boss', window: Window | None, payload_get: PayloadGetType) -> None:
         pass
+
 
 launch = Launch()

@@ -16,24 +16,22 @@ cmdline = (
 )
 
 
-def clean(x):
+def clean(x: str) -> None:
     if os.path.exists(x):
         shutil.rmtree(x)
 
 
-def regenerate():
+def regenerate() -> None:
     clean('out')
 
-    subprocess.check_call(
-        shlex.split(cmdline.format(dest='out'))
-    )
+    subprocess.check_call(shlex.split(cmdline.format(dest='out')))
 
 
-def strip_trailing_whitespace(c):
+def strip_trailing_whitespace(c: str) -> str:
     return re.sub(r'\s+$', '', c, flags=re.MULTILINE) + '\n'
 
 
-def export():
+def export() -> None:
     with open('out/include/glad/gl.h', 'r', encoding='utf-8') as source:
         data = source.read()
         data = strip_trailing_whitespace(data)

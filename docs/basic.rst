@@ -25,6 +25,7 @@ Previous shell prompt       :sc:`scroll_to_previous_prompt` (see :ref:`shell_int
 Next shell prompt           :sc:`scroll_to_next_prompt` (see :ref:`shell_integration`)
 Browse scrollback in less   :sc:`show_scrollback`
 Browse last cmd output      :sc:`show_last_command_output` (see :ref:`shell_integration`)
+Search scrollback in less   :sc:`search_scrollback` (also :kbd:`⌘+F` on macOS)
 =========================   =======================
 
 The scroll actions only take effect when the terminal is in the main screen.
@@ -40,7 +41,7 @@ Action                      Shortcut
 ========================    =======================
 New tab                     :sc:`new_tab` (also :kbd:`⌘+t` on macOS)
 Close tab                   :sc:`close_tab` (also :kbd:`⌘+w` on macOS)
-Next tab                    :sc:`next_tab` (also :kbd:`⇧+⌃+⇥` and :kbd:`⇧+⌘+]` on macOS)
+Next tab                    :sc:`next_tab` (also :kbd:`⌃+⇥` and :kbd:`⇧+⌘+]` on macOS)
 Previous tab                :sc:`previous_tab` (also :kbd:`⇧+⌃+⇥` and :kbd:`⇧+⌘+[` on macOS)
 Next layout                 :sc:`next_layout`
 Move tab forward            :sc:`move_tab_forward`
@@ -88,8 +89,11 @@ You can also define a shortcut to switch to the previously active window::
 :ac:`nth_window` will focus the nth window for positive numbers (starting from
 zero) and the previously active windows for negative numbers.
 
-To switch to the nth OS window, you can define :ac:`nth_os_window`. Only
-positive numbers are accepted, starting from one.
+To switch to the nth OS window, you can define :ac:`nth_os_window`. Positive
+numbers start from one, and numbers larger than the number of OS windows focus
+the last one. Negative numbers select previously active OS windows. Zero
+refocuses the current or most recently focused OS window, if the window manager
+allows applications to grab focus.
 
 .. _detach_window:
 
@@ -109,12 +113,25 @@ or another OS window::
     # asks which tab to move the window into
     map ctrl+f4 detach_window ask
 
+The :ac:`detach_window` action also accepts the options of :program:`kitten @ detach-window`,
+which can be combined with :option:`launch --focus-existing` to use tabs like
+named workspaces, switching to a tab, or sending the current window to it,
+creating the tab if it does not exist::
+
+    # switch to the tab named 1, creating it if needed
+    map ctrl+1 launch --type=tab --tab-title=1 --location=by-title --focus-existing=@title
+    # move the current window to the tab named 1, creating it if needed
+    map ctrl+shift+1 detach_window --target-tab=@title --tab-title=1 --location=by-title --create-if-missing
+
 Similarly, you can detach the current tab, with::
 
     # moves the tab into a new OS window
     map ctrl+f2 detach_tab
     # asks which OS Window to move the tab into
     map ctrl+f4 detach_tab ask
+
+Note that tabs can be re-arranged, detached and moved to another OS Window in
+the same kitty instance using drag and drop.
 
 Finally, you can define a shortcut to close all windows in a tab other than the
 currently active window::

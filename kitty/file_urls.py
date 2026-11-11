@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlsplit
 from .fast_data_types import Screen
 
 MAX_LINES = 16
-fragment = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+\Z")
+fragment = re.compile(r'[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+\Z')
 
 
 @lru_cache(maxsize=128)

@@ -4,7 +4,6 @@ package edit_in_kitty
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/emmansun/base64"
 	"golang.org/x/sys/unix"
 
 	"github.com/kovidgoyal/kitty/tools/cli"
@@ -29,7 +29,7 @@ func encode(x string) string {
 
 type OnDataCallback = func(data_type string, data []byte) error
 
-func edit_loop(data_to_send string, kill_if_signaled bool, on_data OnDataCallback) (err error) {
+func edit_loop(data_to_send string, kill_if_signaled bool, on_data OnDataCallback) (exit_code int, err error) {
 	lp, err := loop.New(loop.NoAlternateScreen, loop.NoRestoreColors, loop.NoMouseTracking)
 	if err != nil {
 		return
@@ -52,7 +52,18 @@ func edit_loop(data_to_send string, kill_if_signaled bool, on_data OnDataCallbac
 				if line == "KITTY_DATA_END" {
 					lp.QueueWriteString(update_type + "\r\n")
 					if update_type == "DONE" {
-						lp.Quit(0)
+						// Parse the editor exit code from the data payload.
+						// Decoding errors are intentionally ignored: if the data is
+						// missing or malformed (e.g. from an older kitty server),
+						// we fall back to exit_code=0 for backward compatibility.
+						if data.Len() > 0 {
+							if b, err2 := base64.StdEncoding.DecodeString(data.String()); err2 == nil {
+								if n, err3 := strconv.Atoi(strings.TrimSpace(string(b))); err3 == nil {
+									exit_code = n
+								}
+							}
+						}
+						lp.Quit(exit_code)
 						return nil
 					}
 					b, err := base64.StdEncoding.DecodeString(data.String())
@@ -150,7 +161,7 @@ func edit_loop(data_to_send string, kill_if_signaled bool, on_data OnDataCallbac
 		return
 	}
 	if canceled {
-		return tui.Canceled
+		return 1, tui.Canceled
 	}
 
 	ds := lp.DeathSignalName()
@@ -160,29 +171,29 @@ func edit_loop(data_to_send string, kill_if_signaled bool, on_data OnDataCallbac
 			lp.KillIfSignalled()
 			return
 		}
-		return &tui.KilledBySignal{Msg: fmt.Sprint("Killed by signal: ", ds), SignalName: ds}
+		return 1, &tui.KilledBySignal{Msg: fmt.Sprint("Killed by signal: ", ds), SignalName: ds}
 	}
 	return
 }
 
-func edit_in_kitty(path string, opts *Options) (err error) {
+func edit_in_kitty(path string, opts *Options) (exit_code int, err error) {
 	read_file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("Failed to open %s for reading with error: %w", path, err)
+		return 1, fmt.Errorf("Failed to open %s for reading with error: %w", path, err)
 	}
 	defer read_file.Close()
 	var s unix.Stat_t
 	err = unix.Fstat(int(read_file.Fd()), &s)
 	if err != nil {
-		return fmt.Errorf("Failed to stat %s with error: %w", path, err)
+		return 1, fmt.Errorf("Failed to stat %s with error: %w", path, err)
 	}
 	if s.Size > int64(opts.MaxFileSize)*1024*1024 {
-		return fmt.Errorf("File size %s is too large for performant editing", humanize.Bytes(uint64(s.Size)))
+		return 1, fmt.Errorf("File size %s is too large for performant editing", humanize.Bytes(uint64(s.Size)))
 	}
 
 	file_data, err := io.ReadAll(read_file)
 	if err != nil {
-		return fmt.Errorf("Failed to read from %s with error: %w", path, err)
+		return 1, fmt.Errorf("Failed to read from %s with error: %w", path, err)
 	}
 	read_file.Close()
 	data := strings.Builder{}
@@ -199,11 +210,11 @@ func edit_in_kitty(path string, opts *Options) (err error) {
 	add_encoded := func(key, val string) { add(key, encode(val)) }
 
 	if unix.Access(path, unix.R_OK|unix.W_OK) != nil {
-		return fmt.Errorf("%s is not readable and writeable", path)
+		return 1, fmt.Errorf("%s is not readable and writeable", path)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("Failed to get the current working directory with error: %w", err)
+		return 1, fmt.Errorf("Failed to get the current working directory with error: %w", err)
 	}
 	add_encoded("cwd", cwd)
 	for _, arg := range os.Args[2:] {
@@ -219,12 +230,12 @@ func edit_in_kitty(path string, opts *Options) (err error) {
 		}
 		return
 	}
-	err = edit_loop(data.String(), true, write_data)
+	exit_code, err = edit_loop(data.String(), true, write_data)
 	if err != nil {
 		if err == tui.Canceled {
-			return err
+			return 1, err
 		}
-		return fmt.Errorf("Failed to receive edited file back from terminal with error: %w", err)
+		return 1, fmt.Errorf("Failed to receive edited file back from terminal with error: %w", err)
 	}
 	return
 }
@@ -236,7 +247,7 @@ type Options struct {
 func EntryPoint(parent *cli.Command) *cli.Command {
 	sc := parent.AddSubCommand(&cli.Command{
 		Name:             "edit-in-kitty",
-		Usage:            "[options] file-to-edit",
+		Usage:            "[options] [+lnum] file-to-edit",
 		ShortDescription: "Edit a file in a kitty overlay window",
 		HelpText: "Edit the specified file in a kitty overlay window. Works over SSH as well.\n\n" +
 			"For usage instructions see: https://sw.kovidgoyal.net/kitty/shell-integration/#edit-file",
@@ -245,17 +256,27 @@ func EntryPoint(parent *cli.Command) *cli.Command {
 				fmt.Fprintln(os.Stderr, "Usage:", cmd.Usage)
 				return 1, fmt.Errorf("No file to edit specified.")
 			}
-			if len(args) != 1 {
+
+			var file_path string
+			if len(args) == 1 {
+				file_path = args[0]
+			} else if len(args) == 2 && strings.HasPrefix(args[0], "+") {
+				var lnum string
+				lnum, file_path = args[0][1:], args[1]
+				if _, err := strconv.Atoi(lnum); err != nil {
+					return 1, fmt.Errorf("Invalid line number %s", lnum)
+				}
+			} else {
 				fmt.Fprintln(os.Stderr, "Usage:", cmd.Usage)
-				return 1, fmt.Errorf("Only one file to edit must be specified")
+				return 1, fmt.Errorf("Only one file to edit and optionally a line number must be specified")
 			}
+
 			var opts Options
 			err = cmd.GetOptionValues(&opts)
 			if err != nil {
 				return 1, err
 			}
-			err = edit_in_kitty(args[0], &opts)
-			return 0, err
+			return edit_in_kitty(file_path, &opts)
 		},
 	})
 	AddCloneSafeOpts(sc)

@@ -8,7 +8,7 @@
 #pragma once
 
 // Space
-#define SP  ' '
+#define SP ' '
 
 // *Null*: Does nothing.
 #define NUL 0
@@ -103,7 +103,7 @@
 #define ESC_DECKPNM '>'
 
 // Set alternate keypad mode
-#define ESC_DECKPAM  '='
+#define ESC_DECKPAM '='
 
 // ECMA-48 CSI sequences.
 // ---------------------
@@ -235,3 +235,5 @@
 #define PENDING_MODE 2026
 // Text size OSC number
 #define TEXT_SIZE_CODE 66
+// Drag and drop protocol
+#define DND_CODE 72

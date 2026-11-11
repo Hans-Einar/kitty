@@ -71,6 +71,12 @@ func GuessMimeType(filename string) string {
 	ext := filepath.Ext(filename)
 	mime_with_parameters := UserMimeMap()[ext]
 	if mime_with_parameters == "" {
+		mime_with_parameters = MimeTypeFromCache(filename)
+	}
+	// The stdlib database is loaded from the same shared-mime-info data as
+	// the cache, but slowly, by parsing text files, so avoid it if the cache
+	// is available.
+	if mime_with_parameters == "" && !HaveMimeCache() {
 		mime_with_parameters = mime.TypeByExtension(ext)
 	}
 	if mime_with_parameters == "" {
@@ -116,4 +122,33 @@ func GuessMimeTypeWithFileSystemAccess(filename string) string {
 		}
 	}
 	return mt
+}
+
+func GuessFileExtensions(mime_type string) (ans []string) {
+	mime_type, _, err := mime.ParseMediaType(mime_type)
+	if err != nil {
+		return
+	}
+	seen := NewSet[string](8)
+	add := func(x string) {
+		if !seen.Has(x) {
+			seen.Add(x)
+			ans = append(ans, x)
+		}
+	}
+	for ext, q := range UserMimeMap() {
+		if ext != "" && q == mime_type {
+			add(ext)
+		}
+	}
+	// Go stdlib returns [".asc", ".text", ".txt"] for this
+	if mime_type == "text/plain" {
+		add(".txt")
+	}
+	if std, err := mime.ExtensionsByType(mime_type); err == nil {
+		for _, x := range std {
+			add(x)
+		}
+	}
+	return
 }

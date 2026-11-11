@@ -37,10 +37,11 @@ func main(cmd *cli.Command, opts *Options, args []string) (rc int, err error) {
 	if err != nil {
 		return 1, err
 	}
-	argv := []string{kitty_exe, "+kitten", "panel", "--toggle-visibility", "--exclusive-zone=0", "--override-exclusive-zone", "--layer=overlay", "--single-instance", "--move-to-active-monitor"}
+	argv := []string{kitty_exe, "+kitten", "panel", "--toggle-visibility", "--exclusive-zone=0", "--override-exclusive-zone", "--single-instance", "--move-to-active-monitor"}
 	argv = append(argv, fmt.Sprintf("--lines=%s", conf.Lines))
 	argv = append(argv, fmt.Sprintf("--columns=%s", conf.Columns))
 	argv = append(argv, fmt.Sprintf("--edge=%s", conf.Edge))
+	argv = append(argv, fmt.Sprintf("--layer=%s", conf.Layer))
 	if conf.Margin_top != 0 {
 		argv = append(argv, fmt.Sprintf("--margin-top=%d", conf.Margin_top))
 	}
@@ -98,11 +99,20 @@ func main(cmd *cli.Command, opts *Options, args []string) (rc int, err error) {
 		if dl, err := filepath.Abs(opts.DetachedLog); err != nil {
 			return 1, err
 		} else {
-			argv = append(argv, dl)
+			argv = append(argv, fmt.Sprintf("--detached-log=%s", dl))
 		}
 	}
 	if opts.InstanceGroup != "" {
 		argv = append(argv, fmt.Sprintf("--instance-group=%s", opts.InstanceGroup))
+	}
+	if opts.IfRunning != "" && opts.IfRunning != "ignore" {
+		argv = append(argv, fmt.Sprintf("--if-running=%s", opts.IfRunning))
+	}
+	if opts.Hold {
+		argv = append(argv, `--hold`)
+	}
+	if opts.ListenOn != "" {
+		argv = append(argv, fmt.Sprintf("--listen-on=%s", opts.ListenOn))
 	}
 
 	argv = append(argv, args...)

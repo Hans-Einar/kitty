@@ -96,8 +96,8 @@ func get_dependencies(path string) (ans []dependency) {
 	for _, line := range lines("otool", "-L", path) {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "compatibility") && !strings.HasSuffix(line, ":") {
-			idx := strings.IndexByte(line, '(')
-			dep := strings.TrimSpace(line[:idx])
+			before, _, _ := strings.Cut(line, "(")
+			dep := strings.TrimSpace(before)
 			ans = append(ans, dependency{path: dep, is_id: dep == install_name})
 		}
 	}
@@ -204,7 +204,16 @@ func relocate_pkgconfig(path, old_prefix, new_prefix string) error {
 	if err != nil {
 		return err
 	}
-	nraw := bytes.ReplaceAll(raw, []byte(old_prefix), []byte(new_prefix))
+	replacement := new_prefix
+	if filepath.Ext(path) == ".pc" {
+		// pkg-config tokenizes Cflags/Libs on unescaped whitespace, so a
+		// prefix containing a space must have that space backslash-escaped,
+		// otherwise `pkg-config --cflags`/`--libs` silently truncates the
+		// path at the first space, breaking the build whenever the checkout
+		// lives under a directory with a space in its name.
+		replacement = strings.NewReplacer(`\`, `\\`, ` `, `\ `).Replace(new_prefix)
+	}
+	nraw := bytes.ReplaceAll(raw, []byte(old_prefix), []byte(replacement))
 	return os.WriteFile(path, nraw, 0o644)
 }
 
@@ -279,8 +288,12 @@ func dependencies(args []string) {
 		which = "macos"
 	case "linux":
 		which = "linux"
-		if runtime.GOARCH != "amd64" {
-			exit("Pre-built dependencies are only available for the amd64 CPU architecture")
+		switch runtime.GOARCH {
+		case "amd64":
+		case "arm64", "arm64be":
+			url = strings.Replace(url, "-64.", "-arm64.", 1)
+		default:
+			exit(fmt.Sprintf("Pre-built binaries are not available for the %s architecture", runtime.GOARCH))
 		}
 	}
 	if which == "" {
@@ -389,6 +402,7 @@ func build(args []string) {
 	}
 	root := root_dir()
 	os.Setenv("DEVELOP_ROOT", root)
+	os.Setenv("SLANGC", filepath.Join(root, "bin", "slangc"))
 	prepend("PKG_CONFIG_PATH", filepath.Join(root, "lib", "pkgconfig"))
 	if runtime.GOOS == "darwin" {
 		os.Setenv("PKGCONFIG_EXE", filepath.Join(root, "bin", "pkg-config"))
@@ -421,7 +435,7 @@ func docs(args []string) {
 	}
 	cmd := []string{target, "SPHINXBUILD=" + exe, "SPHINXAUTOBUILD=" + aexe}
 	if *failwarn {
-		cmd = append(cmd, "FAILWARN=1")
+		cmd = append(cmd, "FAIL_WARN=1")
 	}
 	c := exec.Command("make", cmd...)
 	c.Stdout = os.Stdout

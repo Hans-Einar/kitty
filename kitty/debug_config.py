@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
 from functools import partial
 from pprint import pformat
-from typing import IO, TypeVar
+from typing import IO, TYPE_CHECKING, Protocol, cast
 
 from kittens.tui.operations import colored, styled
 
@@ -24,12 +24,15 @@ from .options.types import Options as KittyOpts
 from .options.types import defaults, secret_options
 from .options.utils import KeyboardMode, KeyDefinition
 from .rgb import color_as_sharp, color_from_int
-from .types import MouseEvent, Shortcut, mod_to_names
+from .types import Shortcut, mod_to_names
 from .utils import shlex_split
 
-AnyEvent = TypeVar('AnyEvent', MouseEvent, Shortcut)
 Print = Callable[..., None]
 ShortcutMap = dict[Shortcut, str]
+if TYPE_CHECKING:
+    from .fast_data_types import FontFace
+else:
+    FontFace = object
 
 
 def green(x: str) -> str:
@@ -55,8 +58,12 @@ def print_mapping_changes(defns: dict[str, str], changes: set[str], text: str, p
             print_event(k, defns[k], print)
 
 
-def compare_maps(
-    final: dict[AnyEvent, str], final_kitty_mod: int, initial: dict[AnyEvent, str], initial_kitty_mod: int, print: Print, mode_name: str = ''
+class AnyEvent(Protocol):
+    def human_repr(self, kitty_mod: int = 0) -> str: ...
+
+
+def compare_maps[T: AnyEvent](
+    final: dict[T, str], final_kitty_mod: int, initial: dict[T, str], initial_kitty_mod: int, print: Print, mode_name: str = ''
 ) -> None:
     ei = {k.human_repr(initial_kitty_mod): v for k, v in initial.items()}
     ef = {k.human_repr(final_kitty_mod): v for k, v in final.items()}
@@ -71,17 +78,14 @@ def compare_maps(
     print_mapping_changes(ef, changed, f'Changed {which}:', print)
 
 
-
 def compare_opts(opts: KittyOpts, global_shortcuts: dict[str, SingleKey] | None, print: Print) -> None:
     from .config import load_config
+
     print()
     print('Config options different from defaults:')
     default_opts = load_config()
-    ignored = ('keymap', 'sequence_map', 'mousemap', 'map', 'mouse_map')
-    changed_opts = [
-        f for f in sorted(defaults._fields)
-        if f not in ignored and getattr(opts, f) != getattr(defaults, f)
-    ]
+    ignored = ('keymap', 'sequence_map', 'mousemap', 'url_mappings', 'map', 'mouse_map')
+    changed_opts = [f for f in sorted(defaults._fields) if f not in ignored and getattr(opts, f) != getattr(defaults, f)]
     field_len = max(map(len, changed_opts)) if changed_opts else 20
     fmt = f'{{:{field_len:d}s}}'
     colors = []
@@ -98,6 +102,9 @@ def compare_opts(opts: KittyOpts, global_shortcuts: dict[str, SingleKey] | None,
             elif f == 'modify_font':
                 for k in sorted(val):
                     print('   ', val[k])
+            elif f == 'exe_search_path':
+                for k in val:
+                    print('   ', k)
             else:
                 print(pformat(val))
         else:
@@ -120,10 +127,6 @@ def compare_opts(opts: KittyOpts, global_shortcuts: dict[str, SingleKey] | None,
                     print(fmt.format(f), str(getattr(opts, f)))
 
     compare_maps(opts.mousemap, opts.kitty_mod, default_opts.mousemap, default_opts.kitty_mod, print)
-    def as_sc(k: SingleKey, v: KeyDefinition) -> Shortcut:
-        if v.is_sequence:
-            return Shortcut((v.trigger,) + v.rest)
-        return Shortcut((k,))
 
     def as_str(defns: Sequence[KeyDefinition]) -> str:
         seen = set()
@@ -135,10 +138,20 @@ def compare_opts(opts: KittyOpts, global_shortcuts: dict[str, SingleKey] | None,
                 uniq.append(d)
         return ', '.join(d.human_repr() for d in uniq)
 
+    def build_shortcut_map(km: KeyboardMode) -> ShortcutMap:
+        result: ShortcutMap = {}
+        for defns in km.keymap.values():
+            by_seq: dict[tuple[SingleKey, ...], list[KeyDefinition]] = {}
+            for d in defns:
+                by_seq.setdefault(d.full_key_sequence_to_trigger, []).append(d)
+            for seq, seq_defns in by_seq.items():
+                result[Shortcut(seq)] = as_str(seq_defns)
+        return result
+
     for kmn, initial_ in default_opts.keyboard_modes.items():
-        initial = {as_sc(k, v[0]): as_str(v) for k, v in initial_.keymap.items()}
+        initial = build_shortcut_map(initial_)
         final_ = opts.keyboard_modes.get(kmn, KeyboardMode(kmn))
-        final = {as_sc(k, v[0]): as_str(v) for k, v in final_.keymap.items()}
+        final = build_shortcut_map(final_)
         if not kmn and global_shortcuts:
             for action, sk in global_shortcuts.items():
                 sc = Shortcut((sk,))
@@ -148,9 +161,9 @@ def compare_opts(opts: KittyOpts, global_shortcuts: dict[str, SingleKey] | None,
     new_keyboard_modes = set(opts.keyboard_modes) - set(default_opts.keyboard_modes)
     for kmn in new_keyboard_modes:
         initial_ = KeyboardMode(kmn)
-        initial = {as_sc(k, v[0]): as_str(v) for k, v in initial_.keymap.items()}
+        initial = build_shortcut_map(initial_)
         final_ = opts.keyboard_modes[kmn]
-        final = {as_sc(k, v[0]): as_str(v) for k, v in final_.keymap.items()}
+        final = build_shortcut_map(final_)
         compare_maps(final, opts.kitty_mod, initial, default_opts.kitty_mod, print, mode_name=kmn)
     if colors:
         print(f'{title("Colors")}:', end='\n\t')
@@ -158,7 +171,6 @@ def compare_opts(opts: KittyOpts, global_shortcuts: dict[str, SingleKey] | None,
 
 
 class IssueData:
-
     def __init__(self) -> None:
         self.uname = os.uname()
         self.s, self.n, self.r, self.v, self.m = self.uname
@@ -253,6 +265,7 @@ def compositor_name() -> str:
                 exe = cmdline[0]
                 with suppress(Exception):
                     import subprocess
+
                     if exe.lower() == 'hyprland':
                         raw = subprocess.check_output(['hyprctl', 'version']).decode().strip()
                         m = re.search(r'^Tag:\s*(\S+)', raw, flags=re.M)
@@ -278,17 +291,20 @@ def issue_data() -> str:
 def debug_config(opts: KittyOpts | None = None, global_shortcuts: dict[str, SingleKey] | None = None) -> str:
     if opts is None:
         from kitty.cli import create_default_opts
+
         opts = create_default_opts()
     from io import StringIO
+
     out = StringIO()
     p = partial(print, file=out)
     p(version(add_rev=True))
     p(' '.join(os.uname()))
     if is_macos:
         import subprocess
+
         with suppress(Exception):
             p(' '.join(subprocess.check_output(['sw_vers']).decode('utf-8').splitlines()).strip())
-    if (idata := issue_data()):
+    if idata := issue_data():
         p(idata)
     with suppress(Exception), open('/etc/lsb-release', encoding='utf-8', errors='replace') as f:
         p(f.read().strip())
@@ -299,7 +315,8 @@ def debug_config(opts: KittyOpts | None = None, global_shortcuts: dict[str, Sing
     p(green('Fonts:'))
     for k, font in current_fonts().items():
         if hasattr(font, 'identify_for_debug'):
-            flines = font.identify_for_debug().splitlines()
+            face: FontFace = cast(FontFace, font)
+            flines = face.identify_for_debug().splitlines()
             p(yellow(f'{k.rjust(8)}:'), flines[0])
             for fl in flines[1:]:
                 p(' ' * 9, fl)

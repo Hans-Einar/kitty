@@ -216,7 +216,7 @@ func CompileGitIgnoreLine(line string) (ans GitPattern, skipped_line bool) {
 	}
 
 	// Handle leading slash used to escape leading # or !
-	if line[0] == '\\' && len(line) > 1 && (line[1] == '#' || line[1] == '!') {
+	if strings.HasPrefix(line, `\#`) || strings.HasPrefix(line, `\!`) {
 		line = line[1:]
 	}
 	if strings.HasSuffix(line, "/") {
@@ -261,11 +261,15 @@ func CompileGitIgnoreLine(line string) (ans GitPattern, skipped_line bool) {
 }
 
 func get_global_gitconfig_excludesfile() (ans string) {
+	return _get_global_gitconfig_excludesfile(utils.Expanduser("~/.gitconfig"))
+}
+
+func _get_global_gitconfig_excludesfile(home_gitconfig string) (ans string) {
 	cfhome := os.Getenv("XDG_CONFIG_HOME")
 	if cfhome == "" {
 		cfhome = utils.Expanduser("~/.config")
 	}
-	for _, candidate := range []string{"/etc/gitconfig", filepath.Join(cfhome, "git", "config"), utils.Expanduser("~/.gitconfig")} {
+	for _, candidate := range []string{"/etc/gitconfig", filepath.Join(cfhome, "git", "config"), home_gitconfig} {
 		if data, err := os.ReadFile(candidate); err == nil {
 			s := utils.NewLineScanner(utils.UnsafeBytesToString(data))
 			in_core := false

@@ -4,6 +4,7 @@ package diff
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ import (
 var _ = fmt.Print
 
 type KittyOpts struct {
-	Wheel_scroll_multiplier int
+	Wheel_scroll_multiplier float64
 	Copy_on_select          bool
 }
 
@@ -29,7 +30,7 @@ func read_relevant_kitty_opts() KittyOpts {
 	handle_line := func(key, val string) error {
 		switch key {
 		case "wheel_scroll_multiplier":
-			v, err := strconv.Atoi(val)
+			v, err := strconv.ParseFloat(val, 64)
 			if err == nil {
 				ans.Wheel_scroll_multiplier = v
 			}
@@ -47,7 +48,10 @@ var RelevantKittyOpts = sync.OnceValue(func() KittyOpts {
 })
 
 func (self *Handler) handle_wheel_event(up bool) {
-	amt := RelevantKittyOpts().Wheel_scroll_multiplier
+	amt := int(math.Round(RelevantKittyOpts().Wheel_scroll_multiplier))
+	if amt == 0 {
+		amt = 1
+	}
 	if up {
 		amt *= -1
 	}
@@ -121,17 +125,18 @@ func (self *Handler) update_mouse_selection(ev *loop.MouseEvent) {
 		self.mouse_selection.DragScroll(ev, self.lp, self.drag_scroll_tick)
 		return
 	}
-	self.do_update_mouse_selection(ev)
+	if self.do_update_mouse_selection(ev) {
+		self.draw_screen()
+	}
 }
 
-func (self *Handler) do_update_mouse_selection(ev *loop.MouseEvent) {
+func (self *Handler) do_update_mouse_selection(ev *loop.MouseEvent) (changed bool) {
 	pos := self.scroll_pos
 	y := ev.Cell.Y
 	y = utils.Max(0, utils.Min(y, self.screen_size.num_lines-1))
 	self.logical_lines.IncrementScrollPosBy(&pos, y)
 	x := self.mouse_selection.StartLine().MinX()
-	self.mouse_selection.Update(ev, self.line_pos_from_pos(x, pos))
-	self.draw_screen()
+	return self.mouse_selection.Update(ev, self.line_pos_from_pos(x, pos))
 }
 
 func (self *Handler) clear_mouse_selection() {

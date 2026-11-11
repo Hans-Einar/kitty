@@ -49,7 +49,7 @@ func (self *WCWidthIterator) handle_csi(csi []byte) error {
 		num_string := utils.UnsafeBytesToString(csi[:len(csi)-1])
 		n, err := strconv.Atoi(num_string)
 		if err == nil && n > 0 {
-			for i := 0; i < n; i++ {
+			for range n {
 				err = self.handle_rune(self.prev_ch)
 				if err != nil {
 					return err
@@ -83,6 +83,12 @@ func (self *WCWidthIterator) handle_rune(ch rune) error {
 			if CharPropsFor(self.prev_ch).Is_emoji_presentation_base() == 1 && self.prev_width == 2 {
 				self.current_width -= 1
 				self.prev_width = 1
+			}
+		default:
+			// Thai/Lao SARA AM: a SpacingMark with non-zero width widens a narrow base cell
+			if cp.Grapheme_break() == uint8(GBP_SpacingMark) && cp.Width() > 0 && self.prev_width == 1 {
+				self.current_width += 1
+				self.prev_width = 2
 			}
 		}
 	} else {

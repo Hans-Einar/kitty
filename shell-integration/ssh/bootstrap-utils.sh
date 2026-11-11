@@ -9,8 +9,20 @@
 mv_files_and_dirs() {
     cwd="$PWD"
     cd "$1"
-    command find . -type d -exec mkdir -p "$2/{}" ";"
-    command find . -type l -exec sh -c "tgt=\$(command readlink -n \"{}\"); command ln -snf \"\$tgt\" \"$2/{}\"; command rm -f \"{}\"" ";"
+    # Directories not present at the destination are moved intact, preserving
+    # their permissions, and pruned. Existing directories are merged, keeping
+    # their permissions, so make the source writable to allow moving out its
+    # contents. If a move fails fall back to creating the directory and merging.
+    command find . -type d ! -name . -exec sh -c '
+        if [ ! -d "$1/$2" ]; then
+            { [ -L "$1/$2" ] || [ -e "$1/$2" ]; } && command rm -f -- "$1/$2"
+            command mv -- "$2" "$1/$2" 2> /dev/null && exit 0
+            [ -d "$1/$2" ] && exit 0
+            command mkdir -p -- "$1/$2"
+        fi
+        command chmod u+rwx "$2"
+        exit 1' sh "$2" "{}" ";" -prune
+    command find . -type l -exec sh -c 'tgt=$(command readlink -n "$2"); command ln -snf -- "$tgt" "$1/$2"; command rm -f -- "$2"' sh "$2" "{}" ";"
     command find . -type f -exec mv "{}" "$2/{}" ";"
     cd "$cwd"
 }
@@ -87,14 +99,14 @@ using_shell_env() {
 
 execute_with_python() {
     if detect_python; then
-        exec "$python" "-c" "import os; os.execlp('$login_shell', '-' '$shell_name')"
+        exec "$python" "-c" 'import os, sys; os.execlp(sys.argv[1], "-" + sys.argv[2])' "$login_shell" "$shell_name"
     fi
     return 1
 }
 
 execute_with_perl() {
     if detect_perl; then
-        exec "$perl" "-e" "exec {'$login_shell'} '-$shell_name'"
+        exec "$perl" "-e" 'exec {$ARGV[0]} ("-" . $ARGV[1])' "$login_shell" "$shell_name"
     fi
     return 1
 }
@@ -215,7 +227,7 @@ prepare_for_exec() {
             fi
             ;;
     esac
-    shell_name=$(command basename $login_shell)
+    shell_name=$(command basename "$login_shell")
     [ -n "$login_cwd" ] && cd "$login_cwd"
 }
 

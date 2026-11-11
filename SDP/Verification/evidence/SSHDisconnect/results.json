@@ -1,0 +1,74 @@
+[
+  {
+    "before_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "ssh_exit": 255,
+    "termios_restored": true,
+    "after_hex": "1b5b3f313030333b3124791b5b3f313030363b3124791b5b3f3875",
+    "events_hex": "1b5b3c33353b31323b354d1b5b3c33353b31343b364d1b5b3c33353b31363b374d1b5b393775",
+    "reset_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "label": "fork",
+    "client": "plain",
+    "disconnect": true,
+    "server_errors": [],
+    "escaped": {
+      "before": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u",
+      "after": "\\x1b[?1003;1$y\\x1b[?1006;1$y\\x1b[?8u",
+      "events": "\\x1b[<35;12;5M\\x1b[<35;14;6M\\x1b[<35;16;7M\\x1b[97u",
+      "reset": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u"
+    }
+  },
+  {
+    "before_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "ssh_exit": 255,
+    "termios_restored": true,
+    "after_hex": "1b5b3f313030333b3124791b5b3f313030363b3124791b5b3f3875",
+    "events_hex": "1b5b3c33353b31323b354d1b5b3c33353b31343b364d1b5b3c33353b31363b374d1b5b393775",
+    "reset_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "label": "upstream",
+    "client": "plain",
+    "disconnect": true,
+    "server_errors": [],
+    "escaped": {
+      "before": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u",
+      "after": "\\x1b[?1003;1$y\\x1b[?1006;1$y\\x1b[?8u",
+      "events": "\\x1b[<35;12;5M\\x1b[<35;14;6M\\x1b[<35;16;7M\\x1b[97u",
+      "reset": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u"
+    }
+  },
+  {
+    "before_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "ssh_exit": 0,
+    "termios_restored": true,
+    "after_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "events_hex": "61",
+    "reset_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "label": "upstream",
+    "client": "plain",
+    "disconnect": false,
+    "server_errors": [],
+    "escaped": {
+      "before": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u",
+      "after": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u",
+      "events": "a",
+      "reset": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u"
+    }
+  },
+  {
+    "before_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "ssh_exit": 255,
+    "termios_restored": true,
+    "after_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "events_hex": "61",
+    "reset_hex": "1b5b3f313030333b3224791b5b3f313030363b3224791b5b3f3075",
+    "label": "upstream",
+    "client": "kitten",
+    "disconnect": true,
+    "server_errors": [],
+    "escaped": {
+      "before": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u",
+      "after": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u",
+      "events": "a",
+      "reset": "\\x1b[?1003;2$y\\x1b[?1006;2$y\\x1b[?0u"
+    }
+  }
+]
